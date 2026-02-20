@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
 import { KeyMomentsList } from "./key-moments-list";
-import { ConfidenceBadge } from "./confidence-badge";
 import type { ReplayResult } from "@/lib/engine/types";
 import { formatDateDisplay, getExpirationLabel } from "@/lib/engine/dates";
 
@@ -50,7 +49,6 @@ export function ContractReplay({
         <Badge variant="outline" className="text-[11px]">
           Estimated (MVP)
         </Badge>
-        <ConfidenceBadge confidence={contract.confidence} />
       </div>
 
       {/* Summary cards */}

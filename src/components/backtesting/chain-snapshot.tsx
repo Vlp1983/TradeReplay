@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ConfidenceBadge } from "./confidence-badge";
+import { ArrowUpRight, ArrowDownRight, MousePointerClick } from "lucide-react";
 import type {
   ChainData,
   ChainRow,
@@ -98,16 +98,26 @@ export function ChainSnapshot({
         </Badge>
       </div>
 
+      {/* Strike selection prompt */}
+      {!selectedRow && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-accent/20 bg-accent/5 px-4 py-2.5">
+          <MousePointerClick className="h-4 w-4 shrink-0 text-accent" />
+          <p className="text-[13px] text-text-secondary">
+            Select a strike price below to replay the contract
+          </p>
+        </div>
+      )}
+
       {/* Tables */}
       <div className="grid gap-4 lg:grid-cols-2">
         <ChainTable
-          title="Calls"
+          right="call"
           rows={chain.calls}
           selectedStrike={selectedRight === "call" ? selectedStrike : null}
           onRowClick={(strike) => handleRowClick(strike, "call")}
         />
         <ChainTable
-          title="Puts"
+          right="put"
           rows={chain.puts}
           selectedStrike={selectedRight === "put" ? selectedStrike : null}
           onRowClick={(strike) => handleRowClick(strike, "put")}
@@ -131,7 +141,7 @@ export function ChainSnapshot({
             </>
           ) : (
             <span className="text-text-muted">
-              Click a row to select a contract
+              No contract selected
             </span>
           )}
         </div>
@@ -146,19 +156,33 @@ export function ChainSnapshot({
 // ---- inner table ----
 
 function ChainTable({
-  title,
+  right,
   rows,
   selectedStrike,
   onRowClick,
 }: {
-  title: string;
+  right: Right;
   rows: ChainRow[];
   selectedStrike: number | null;
   onRowClick: (strike: number) => void;
 }) {
+  const isCall = right === "call";
+
   return (
     <div>
-      <p className="mb-2 text-[13px] font-medium text-text-muted">{title}</p>
+      <div className="mb-2 flex items-center gap-2">
+        {isCall ? (
+          <ArrowUpRight className="h-4 w-4 text-green-400" />
+        ) : (
+          <ArrowDownRight className="h-4 w-4 text-red-400" />
+        )}
+        <p className={`text-sm font-semibold ${isCall ? "text-green-400" : "text-red-400"}`}>
+          {isCall ? "CALLS" : "PUTS"}
+        </p>
+        <span className="text-[11px] text-text-muted">
+          {isCall ? "Bullish" : "Bearish"}
+        </span>
+      </div>
       <div className="overflow-hidden rounded-lg border border-border">
         <table className="w-full text-left text-[13px]">
           <thead>
@@ -167,7 +191,6 @@ function ChainTable({
               <th className="px-3 py-2 font-medium text-text-muted">
                 Est. Premium
               </th>
-              <th className="px-3 py-2 font-medium text-text-muted">Conf.</th>
             </tr>
           </thead>
           <tbody>
@@ -195,9 +218,6 @@ function ChainTable({
                   </td>
                   <td className="px-3 py-2.5 font-mono text-text-secondary">
                     ${row.premium.toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <ConfidenceBadge confidence={row.confidence} />
                   </td>
                 </tr>
               );
