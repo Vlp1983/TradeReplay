@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
+  ExternalLink,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -482,6 +483,16 @@ function GuruRow({
                     <span className="text-[12px] text-text-muted">
                       {stats.totalAlerts} total alerts
                     </span>
+                  </div>
+
+                  {/* View full profile */}
+                  <div className="mb-5">
+                    <Button variant="outline" size="sm" asChild className="gap-1.5">
+                      <Link href={`/scoreboard/${guru.id}`}>
+                        <ExternalLink className="h-3 w-3" />
+                        View Full Profile
+                      </Link>
+                    </Button>
                   </div>
 
                   {/* Trade log */}

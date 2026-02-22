@@ -317,3 +317,13 @@ export function getRankedGurus(
 
   return sorted.map((g, i) => ({ ...g, rank: i + 1 }));
 }
+
+/** Look up a single guru by id */
+export function getGuruById(id: string): Guru | undefined {
+  return gurus.find((g) => g.id === id);
+}
+
+/** Get all guru ids for static params */
+export function getAllGuruIds(): string[] {
+  return gurus.map((g) => g.id);
+}
