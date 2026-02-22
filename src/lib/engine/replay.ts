@@ -16,9 +16,9 @@ import type {
 } from "./types";
 import type { IntradayBar } from "@/lib/services/yahoo-finance";
 import {
+  getUnderlyingPrice,
   estimatePremium,
   getImpliedVol,
-  generateUnderlyingPath,
   BASE_VOLATILITY,
   seedFromMoment,
 } from "./pricing";
@@ -178,9 +178,7 @@ function generateRealisticPath(
   expirationDays: number,
   sigma: number
 ): { times: string[]; labels: string[]; prices: number[]; dayIndices: number[] } {
-  // Fall back to the base GBM path first
-  const { getUnderlyingPrice } = require("./pricing");
-  const basePrice = getUnderlyingPrice(ticker, date, entryTime) as number;
+  const basePrice = getUnderlyingPrice(ticker, date, entryTime);
 
   const rng = seedFromMoment(ticker, date, entryTime, 77);
   const dt = 5 / (252 * 390); // 5-minute steps (more granular than 15m)
