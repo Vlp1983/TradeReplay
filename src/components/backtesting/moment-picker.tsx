@@ -35,11 +35,11 @@ export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
           1
         </span>
         <h2 className="text-lg font-semibold text-text-primary">
-          Select Moment
+          Pick a moment in time
         </h2>
       </div>
       <p className="mb-5 text-[13px] text-text-muted">
-        Pick a ticker, date, and entry time to load the options chain.
+        Choose what you were trading, the day, and when you would have entered.
       </p>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">

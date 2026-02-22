@@ -32,9 +32,12 @@ export function ContractReplay({
           3
         </span>
         <h2 className="text-lg font-semibold text-text-primary">
-          Contract Replay
+          See your results
         </h2>
       </div>
+      <p className="mb-3 text-[13px] text-text-muted">
+        Here&apos;s how this contract played out from entry to close.
+      </p>
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-text-primary">

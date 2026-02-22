@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowUpRight, ArrowDownRight, MousePointerClick } from "lucide-react";
@@ -26,8 +26,16 @@ export function ChainSnapshot({
   onReplayContract,
   loading,
 }: ChainSnapshotProps) {
-  const [selectedStrike, setSelectedStrike] = useState<number | null>(null);
+  const atmStrike = chain.calls.find((r) => r.isATM)?.strike ?? null;
+  const [selectedStrike, setSelectedStrike] = useState<number | null>(atmStrike);
   const [selectedRight, setSelectedRight] = useState<Right>("call");
+
+  // Reset to ATM call whenever the chain changes (new ticker/date/time/expiration)
+  useEffect(() => {
+    const atm = chain.calls.find((r) => r.isATM)?.strike ?? null;
+    setSelectedStrike(atm);
+    setSelectedRight("call");
+  }, [chain]);
 
   const selectedRow =
     selectedRight === "call"
@@ -61,12 +69,13 @@ export function ChainSnapshot({
           2
         </span>
         <h2 className="text-lg font-semibold text-text-primary">
-          Chain Snapshot
+          Pick a contract
         </h2>
       </div>
       <p className="mb-4 text-[13px] text-text-muted">
-        {chain.ticker} &mdash; {formatDateDisplay(chain.date)} {chain.entryTime}{" "}
-        ET &mdash; Underlying: ${chain.underlyingPrice.toFixed(2)}
+        We defaulted to the at-the-money call. Tap any strike below to switch.
+        &mdash; {chain.ticker} {formatDateDisplay(chain.date)} {chain.entryTime}{" "}
+        ET &mdash; ${chain.underlyingPrice.toFixed(2)}
       </p>
 
       {/* Expiration toggle + MVP tag */}
@@ -98,12 +107,12 @@ export function ChainSnapshot({
         </Badge>
       </div>
 
-      {/* Strike selection prompt */}
+      {/* Strike selection prompt — only if nothing is selected (edge case) */}
       {!selectedRow && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-accent/20 bg-accent/5 px-4 py-2.5">
           <MousePointerClick className="h-4 w-4 shrink-0 text-accent" />
           <p className="text-[13px] text-text-secondary">
-            Select a strike price below to replay the contract
+            Tap a strike price below to get started
           </p>
         </div>
       )}

@@ -104,20 +104,22 @@ export default function BacktestingPage() {
       <main className="min-h-screen px-4 pb-16 pt-[96px] md:px-6">
         <div className="mx-auto max-w-content">
           {/* Page header */}
-          <div className="mb-6 flex items-center gap-3">
-            <Button variant="ghost" size="icon" asChild>
-              <Link href="/">
-                <ArrowLeft className="h-4 w-4" />
-              </Link>
-            </Button>
-            <div>
+          <div className="mb-8">
+            <div className="mb-3 flex items-center gap-3">
+              <Button variant="ghost" size="icon" asChild>
+                <Link href="/">
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
+              </Button>
               <h1 className="text-2xl font-bold text-text-primary">
                 Options Backtesting
               </h1>
-              <p className="text-[13px] text-text-muted">
-                Select a moment, view the chain, replay the contract.
-              </p>
             </div>
+            <p className="text-[15px] leading-relaxed text-text-secondary">
+              Select a moment from the past, pick an options contract, and see
+              how much profit you would have made. Ideal for backtesting
+              callouts or trade strategies.
+            </p>
           </div>
 
           {/* 3-step vertical flow */}
