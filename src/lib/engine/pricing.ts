@@ -55,8 +55,58 @@ export function seedFromMoment(
 // ---------- base underlying prices ----------
 
 const BASE_PRICES: Record<string, number> = {
+  // Options (equities/ETFs)
   SPY: 510,
   QQQ: 445,
+  AAPL: 230,
+  TSLA: 340,
+  NVDA: 135,
+  AMZN: 210,
+  // Futures
+  ES: 5100,
+  NQ: 18200,
+  CL: 72,
+  GC: 2350,
+  SI: 28,
+  // Crypto
+  BTC: 97000,
+  ETH: 3400,
+  SOL: 190,
+  DOGE: 0.32,
+  XRP: 2.40,
+};
+
+/** Base implied volatility by ticker (annualized). */
+export const BASE_VOLATILITY: Record<string, number> = {
+  // Options
+  SPY: 0.18,
+  QQQ: 0.22,
+  AAPL: 0.28,
+  TSLA: 0.55,
+  NVDA: 0.50,
+  AMZN: 0.32,
+  // Futures
+  ES: 0.18,
+  NQ: 0.22,
+  CL: 0.35,
+  GC: 0.15,
+  SI: 0.28,
+  // Crypto (higher vol)
+  BTC: 0.60,
+  ETH: 0.70,
+  SOL: 0.85,
+  DOGE: 1.00,
+  XRP: 0.80,
+};
+
+/**
+ * Price variation range by asset class.
+ * Crypto/futures can swing more than equity options.
+ */
+const PRICE_VARIATION: Record<string, number> = {
+  SPY: 0.06, QQQ: 0.06, AAPL: 0.08, TSLA: 0.10, NVDA: 0.10, AMZN: 0.08,
+  ES: 0.06, NQ: 0.06, CL: 0.10, GC: 0.06, SI: 0.10,
+  BTC: 0.12, ETH: 0.14, SOL: 0.18, DOGE: 0.20, XRP: 0.16,
 };
 
 /** Generate a deterministic underlying price for a given moment. */
@@ -67,8 +117,10 @@ export function getUnderlyingPrice(
 ): number {
   const rng = seedFromMoment(ticker, date, time);
   const base = BASE_PRICES[ticker] ?? 500;
-  // ±3% variation from base
-  return +(base * (1 + (rng() - 0.5) * 0.06)).toFixed(2);
+  const variation = PRICE_VARIATION[ticker] ?? 0.06;
+  return +(base * (1 + (rng() - 0.5) * variation)).toFixed(
+    base < 1 ? 4 : base < 100 ? 2 : 2
+  );
 }
 
 // ---------- Black-Scholes Path A ----------

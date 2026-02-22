@@ -21,6 +21,14 @@ interface ChainSnapshotProps {
   loading?: boolean;
 }
 
+/** Format a strike price sensibly for display — handles $0.005 to $97,000. */
+function fmtStrike(strike: number): string {
+  if (strike >= 1000) return strike.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (strike >= 1) return strike.toFixed(strike % 1 === 0 ? 0 : 2);
+  if (strike >= 0.01) return strike.toFixed(strike % 0.01 === 0 ? 2 : 3);
+  return strike.toFixed(4);
+}
+
 export function ChainSnapshot({
   chain,
   onExpirationChange,
@@ -88,7 +96,7 @@ export function ChainSnapshot({
       <p className="mb-4 text-[13px] text-text-muted">
         Select an OTM call or put to replay a different strike.
         &mdash; {chain.ticker} {formatDateDisplay(chain.date)} {to12Hour(chain.entryTime)}{" "}
-        ET &mdash; ${chain.underlyingPrice.toFixed(2)}
+        ET &mdash; ${fmtStrike(chain.underlyingPrice)}
       </p>
 
       {/* Expiration toggle + MVP tag */}
@@ -153,7 +161,7 @@ export function ChainSnapshot({
             <>
               Selected:{" "}
               <span className="font-medium text-text-primary">
-                {chain.ticker} {selectedStrike}
+                {chain.ticker} {fmtStrike(selectedStrike!)}
                 {selectedRight === "call" ? "C" : "P"}
               </span>{" "}
               &mdash; ${selectedRow.premium.toFixed(2)}{" "}
@@ -231,7 +239,7 @@ function ChainTable({
                   }`}
                 >
                   <td className="px-3 py-2.5 font-mono text-text-primary">
-                    ${row.strike}
+                    ${fmtStrike(row.strike)}
                     {row.isATM && (
                       <span className="ml-1.5 text-[10px] font-semibold text-accent">
                         ATM

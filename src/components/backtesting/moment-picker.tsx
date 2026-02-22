@@ -3,7 +3,12 @@
 import { useState, useMemo } from "react";
 import { ChevronDown, TrendingUp, Calendar, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Ticker, MomentSelection } from "@/lib/engine/types";
+import type { Ticker, AssetClass, MomentSelection } from "@/lib/engine/types";
+import {
+  ASSET_CLASS_TICKERS,
+  ASSET_CLASS_LABELS,
+  TICKER_LABELS,
+} from "@/lib/engine/types";
 import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay } from "@/lib/engine/dates";
 
 interface MomentPickerProps {
@@ -11,17 +16,22 @@ interface MomentPickerProps {
   loading?: boolean;
 }
 
-const TICKERS: Ticker[] = ["SPY", "QQQ"];
-
 export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
+  const [assetClass, setAssetClass] = useState<AssetClass>("options");
   const [ticker, setTicker] = useState<Ticker | "">("");
   const [date, setDate] = useState("");
   const [entryTime, setEntryTime] = useState("");
 
+  const tickers = ASSET_CLASS_TICKERS[assetClass];
   const tradingDays = useMemo(() => getRecentTradingDays(14), []);
   const timeSlots = useMemo(() => getEntryTimeSlots(), []);
 
   const canSubmit = ticker && date && entryTime && !loading;
+
+  function handleAssetClassChange(ac: AssetClass) {
+    setAssetClass(ac);
+    setTicker(""); // reset ticker when switching asset class
+  }
 
   function handleSubmit() {
     if (!canSubmit) return;
@@ -42,6 +52,23 @@ export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
         Choose what you were trading, the day, and when you would have entered.
       </p>
 
+      {/* Asset class toggle */}
+      <div className="mb-4 flex rounded-lg border border-border p-0.5 w-fit">
+        {(Object.keys(ASSET_CLASS_LABELS) as AssetClass[]).map((ac) => (
+          <button
+            key={ac}
+            onClick={() => handleAssetClassChange(ac)}
+            className={`rounded-md px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
+              assetClass === ac
+                ? "bg-accent text-white"
+                : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            {ASSET_CLASS_LABELS[ac]}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">
         {/* Ticker */}
         <div className="flex-1">
@@ -60,9 +87,9 @@ export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
               }`}
             >
               <option value="">Choose ticker...</option>
-              {TICKERS.map((t) => (
+              {tickers.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {TICKER_LABELS[t]}
                 </option>
               ))}
             </select>

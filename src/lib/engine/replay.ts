@@ -15,6 +15,7 @@ import {
   estimatePremium,
   getImpliedVol,
   generateUnderlyingPath,
+  BASE_VOLATILITY,
 } from "./pricing";
 import { getExpirationDays } from "./chain";
 
@@ -35,7 +36,7 @@ export function replayContract(contract: SelectedContract): ReplayResult {
   const isCall = right === "call";
   const basePrice = getUnderlyingPrice(ticker, date, entryTime);
   const expirationDays = getExpirationDays(date, expiration);
-  const baseVol = 0.22;
+  const baseVol = BASE_VOLATILITY[ticker] ?? 0.22;
 
   // Generate underlying price path
   const path = generateUnderlyingPath(
