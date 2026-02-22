@@ -19,6 +19,7 @@ interface ReplayChartProps {
   sameDayPoints: TimePoint[];
   toExpirationPoints: TimePoint[];
   isMultiDay: boolean;
+  entryPremium: number;
 }
 
 interface TooltipProps {
@@ -87,6 +88,7 @@ export function ReplayChart({
   sameDayPoints,
   toExpirationPoints,
   isMultiDay,
+  entryPremium,
 }: ReplayChartProps) {
   const [view, setView] = useState<ViewMode>("pl");
   const [range, setRange] = useState<ChartRange>("same_day");
@@ -111,8 +113,10 @@ export function ReplayChart({
 
   const lineColor = "#3B82F6";
 
-  // Entry premium value for reference line
-  const entryValue = view === "pl" ? 0 : points[0]?.price ?? 0;
+  // Entry value for the reference line
+  // P/L view: entry is at $0 (breakeven)
+  // Premium view: entry is at the actual entry premium
+  const entryValue = view === "pl" ? 0 : entryPremium;
 
   return (
     <div className="rounded-lg border border-border bg-bg p-4">
@@ -201,16 +205,16 @@ export function ReplayChart({
             content={view === "pl" ? <CustomTooltip /> : <PriceTooltip />}
           />
 
-          {/* Entry reference line — prominent */}
+          {/* Entry reference line — blue dashed */}
           <ReferenceLine
             y={entryValue}
-            stroke="rgba(246,248,255,0.5)"
+            stroke="#3B82F6"
             strokeWidth={1.5}
             strokeDasharray="6 4"
             label={{
-              value: "Your Entry",
+              value: view === "pl" ? "Breakeven" : `Entry $${entryPremium.toFixed(2)}`,
               position: "left",
-              fill: "rgba(246,248,255,0.7)",
+              fill: "#3B82F6",
               fontSize: 11,
               fontWeight: 600,
             }}

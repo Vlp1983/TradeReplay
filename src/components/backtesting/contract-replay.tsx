@@ -119,6 +119,7 @@ export function ContractReplay({
           sameDayPoints={sameDayPoints}
           toExpirationPoints={toExpirationPoints}
           isMultiDay={isMultiDay}
+          entryPremium={metrics.entryPremium}
         />
       </div>
 

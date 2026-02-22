@@ -120,6 +120,7 @@ export interface KeyMoment {
   time: string;
   label: string;
   reason: string;
+  type?: "trade" | "news";
 }
 
 export interface ReplayResult {
