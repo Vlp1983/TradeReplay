@@ -129,4 +129,7 @@ export interface ReplayResult {
   toExpirationPoints: TimePoint[];
   metrics: ReplayMetrics;
   keyMoments: KeyMoment[];
+  /** AI-generated or data-driven contextual insights (3-5 bullets) */
+  insights?: string[];
+  insightsSource?: "ai" | "data-driven";
 }

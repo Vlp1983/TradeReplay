@@ -6,6 +6,7 @@ import { List } from "lucide-react";
 import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
 import { KeyMomentsList } from "./key-moments-list";
+import { InsightsPanel } from "./insights-panel";
 import type { ReplayResult, Right } from "@/lib/engine/types";
 import { getExpirationLabel, to12Hour } from "@/lib/engine/dates";
 
@@ -123,9 +124,19 @@ export function ContractReplay({
         />
       </div>
 
-      {/* Key moments */}
-      <div className="mb-6">
+      {/* Key Insights — trade moments */}
+      <div className="mb-5">
         <KeyMomentsList moments={keyMoments} />
+      </div>
+
+      {/* What Happened & Why — AI-generated contextual analysis */}
+      <div className="mb-6">
+        <InsightsPanel
+          insights={result.insights}
+          source={result.insightsSource}
+          ticker={contract.ticker}
+          date={contract.date}
+        />
       </div>
 
       {/* Actions */}

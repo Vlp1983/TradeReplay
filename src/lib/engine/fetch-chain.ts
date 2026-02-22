@@ -11,6 +11,7 @@ import type {
   ChainRow,
   Confidence,
 } from "./types";
+import type { IntradayBar } from "@/lib/services/yahoo-finance";
 import { generateChain } from "./chain";
 
 // ─── Yahoo symbol mapping ────────────────────────────────────────────
@@ -191,5 +192,85 @@ export async function fetchLiveChain(
     );
     const chain = generateChain(ticker, date, entryTime, expiration);
     return { chain, availableExpirations: [], source: "synthetic" };
+  }
+}
+
+// ─── Intraday price data ──────────────────────────────────────────────
+
+export interface IntradayResult {
+  bars: IntradayBar[];
+  source: "yahoo" | "none";
+}
+
+/**
+ * Fetch real intraday price bars for the underlying via /api/intraday.
+ * Returns empty bars array if data is unavailable (too old, no data, etc).
+ */
+export async function fetchIntradayPrices(
+  ticker: Ticker,
+  date: string
+): Promise<IntradayResult> {
+  try {
+    const symbol = yahooSymbol(ticker);
+    const res = await fetch(
+      `/api/intraday?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`
+    );
+    if (!res.ok) throw new Error(`API ${res.status}`);
+
+    const data = await res.json();
+    if (!data.bars || data.bars.length === 0) {
+      throw new Error("No bars returned");
+    }
+
+    return { bars: data.bars as IntradayBar[], source: "yahoo" };
+  } catch (err) {
+    console.warn(
+      `[fetchIntradayPrices] Failed for ${ticker} on ${date}:`,
+      err
+    );
+    return { bars: [], source: "none" };
+  }
+}
+
+// ─── AI insights ─────────────────────────────────────────────────────
+
+export interface InsightsResult {
+  insights: string[];
+  source: "ai" | "data-driven";
+}
+
+/**
+ * Fetch AI-generated contextual insights for a replay.
+ */
+export async function fetchInsights(payload: {
+  ticker: string;
+  date: string;
+  entryTime: string;
+  strike: number;
+  right: "call" | "put";
+  entryPremium: number;
+  exitPL: number;
+  exitPLPct: number;
+  maxProfit: number;
+  maxProfitPct: number;
+  maxProfitTime: string;
+  maxDrawdown: number;
+  maxDrawdownPct: number;
+  underlyingStart: number;
+  underlyingEnd: number;
+  underlyingHigh: number;
+  underlyingLow: number;
+}): Promise<InsightsResult> {
+  try {
+    const res = await fetch("/api/insights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn("[fetchInsights] Failed:", err);
+    return { insights: [], source: "data-driven" };
   }
 }

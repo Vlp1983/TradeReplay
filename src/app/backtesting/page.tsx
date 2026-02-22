@@ -18,7 +18,8 @@ import type {
   ReplayResult,
   Right,
 } from "@/lib/engine/types";
-import { fetchLiveChain } from "@/lib/engine/fetch-chain";
+import type { IntradayBar } from "@/lib/services/yahoo-finance";
+import { fetchLiveChain, fetchIntradayPrices, fetchInsights } from "@/lib/engine/fetch-chain";
 import { replayContract } from "@/lib/engine/replay";
 
 type Step = "moment" | "chain" | "replay";
@@ -31,13 +32,68 @@ export default function BacktestingPage() {
   const [loadingReplay, setLoadingReplay] = useState(false);
   const [moment, setMoment] = useState<MomentSelection | null>(null);
   const [dataSource, setDataSource] = useState<"yahoo" | "synthetic">("synthetic");
+  const [intradayBars, setIntradayBars] = useState<IntradayBar[]>([]);
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
 
+  /** Run replay and fetch AI insights for a contract */
+  const runReplayWithInsights = useCallback(
+    async (contract: SelectedContract, bars: IntradayBar[]) => {
+      // Run replay synchronously with real data
+      const result = replayContract(contract, bars.length > 0 ? bars : undefined);
+      setReplayResult(result);
+      setStep("replay");
+      setLoadingReplay(false);
+
+      setTimeout(() => {
+        replayRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 100);
+
+      // Fetch AI insights asynchronously (non-blocking)
+      const underlyingPrices = bars.length > 0
+        ? bars.map((b) => b.close)
+        : result.sameDayPoints.map((p) => p.price);
+
+      try {
+        const insightsResult = await fetchInsights({
+          ticker: contract.ticker,
+          date: contract.date,
+          entryTime: contract.entryTime,
+          strike: contract.strike,
+          right: contract.right,
+          entryPremium: contract.entryPremium,
+          exitPL: result.metrics.exitAtClosePL,
+          exitPLPct: result.metrics.exitAtClosePLPct,
+          maxProfit: result.metrics.maxProfit,
+          maxProfitPct: result.metrics.maxProfitPct,
+          maxProfitTime: result.metrics.maxProfitTime,
+          maxDrawdown: result.metrics.maxDrawdown,
+          maxDrawdownPct: result.metrics.maxDrawdownPct,
+          underlyingStart: underlyingPrices[0] ?? 0,
+          underlyingEnd: underlyingPrices[underlyingPrices.length - 1] ?? 0,
+          underlyingHigh: Math.max(...underlyingPrices),
+          underlyingLow: Math.min(...underlyingPrices),
+        });
+
+        if (insightsResult.insights.length > 0) {
+          setReplayResult((prev) =>
+            prev ? { ...prev, insights: insightsResult.insights, insightsSource: insightsResult.source } : prev
+          );
+        }
+      } catch {
+        // Insights are non-critical — replay still works without them
+      }
+    },
+    []
+  );
+
   /** Replay an ATM contract for a given right (call or put) using current chain */
   const replayAtm = useCallback(
-    (chain: ChainData, right: Right) => {
+    (chain: ChainData, right: Right, bars: IntradayBar[]) => {
       const rows = right === "call" ? chain.calls : chain.puts;
       const atmRow = rows.find((r) => r.isATM);
       if (!atmRow) return;
@@ -55,20 +111,10 @@ export default function BacktestingPage() {
 
       setLoadingReplay(true);
       setTimeout(() => {
-        const result = replayContract(atmContract);
-        setReplayResult(result);
-        setStep("replay");
-        setLoadingReplay(false);
-
-        setTimeout(() => {
-          replayRef.current?.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          });
-        }, 100);
+        runReplayWithInsights(atmContract, bars);
       }, 300);
     },
-    []
+    [runReplayWithInsights]
   );
 
   const handleLoadChain = useCallback(
@@ -77,19 +123,19 @@ export default function BacktestingPage() {
       setLoadingChain(true);
       setReplayResult(null);
 
-      const { chain, source } = await fetchLiveChain(
-        selection.ticker,
-        selection.date,
-        selection.entryTime,
-        "0dte"
-      );
+      // Fetch chain and intraday data in parallel
+      const [chainResult, intradayResult] = await Promise.all([
+        fetchLiveChain(selection.ticker, selection.date, selection.entryTime, "0dte"),
+        fetchIntradayPrices(selection.ticker, selection.date),
+      ]);
 
-      setChainData(chain);
-      setDataSource(source);
+      setChainData(chainResult.chain);
+      setDataSource(chainResult.source);
+      setIntradayBars(intradayResult.bars);
       setLoadingChain(false);
 
-      // Auto-replay ATM call
-      replayAtm(chain, "call");
+      // Auto-replay ATM call with real intraday data
+      replayAtm(chainResult.chain, "call", intradayResult.bars);
     },
     [replayAtm]
   );
@@ -97,9 +143,9 @@ export default function BacktestingPage() {
   const handleToggleRight = useCallback(
     (right: Right) => {
       if (!chainData) return;
-      replayAtm(chainData, right);
+      replayAtm(chainData, right, intradayBars);
     },
-    [chainData, replayAtm]
+    [chainData, intradayBars, replayAtm]
   );
 
   const handleExpirationChange = useCallback(
@@ -123,26 +169,17 @@ export default function BacktestingPage() {
     [moment]
   );
 
-  const handleReplayContract = useCallback((contract: SelectedContract) => {
-    setLoadingReplay(true);
-
-    setTimeout(() => {
-      const result = replayContract(contract);
-      setReplayResult(result);
-      setStep("replay");
-      setLoadingReplay(false);
-
+  const handleReplayContract = useCallback(
+    (contract: SelectedContract) => {
+      setLoadingReplay(true);
       setTimeout(() => {
-        replayRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      }, 100);
-    }, 400);
-  }, []);
+        runReplayWithInsights(contract, intradayBars);
+      }, 400);
+    },
+    [intradayBars, runReplayWithInsights]
+  );
 
   const handlePickAnother = useCallback(() => {
-    // Keep replayResult so user can navigate back
     setStep("chain");
     setTimeout(() => {
       chainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -163,6 +200,7 @@ export default function BacktestingPage() {
     setReplayResult(null);
     setMoment(null);
     setDataSource("synthetic");
+    setIntradayBars([]);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 

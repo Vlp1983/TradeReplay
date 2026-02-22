@@ -358,3 +358,95 @@ export async function fetchNormalizedChain(
 
   return normalized;
 }
+
+// ─── Intraday chart data ─────────────────────────────────────────────
+
+export interface IntradayBar {
+  time: string;       // HH:MM
+  label: string;      // 12-hour display label
+  timestamp: number;  // unix ms
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+const chartCache = new Map<string, CacheEntry<IntradayBar[]>>();
+
+/**
+ * Fetch intraday price bars from Yahoo Finance chart API.
+ * Returns 5-minute bars for a specific date filtered to trading hours.
+ * Yahoo supports ~60 days of 5m data and ~7 days of 1m data.
+ */
+export async function getIntradayChart(
+  symbol: string,
+  date: string
+): Promise<IntradayBar[]> {
+  const key = `chart:${symbol.toUpperCase()}:${date}`;
+  const cached = getCached(chartCache, key);
+  if (cached) return cached;
+
+  try {
+    // period1 = start of requested date, period2 = end of next day
+    const startDate = new Date(date + "T04:00:00Z"); // pre-market start
+    const endDate = new Date(date + "T21:00:00Z");   // post-market end
+
+    const result = await yf.chart(symbol.toUpperCase(), {
+      period1: startDate,
+      period2: endDate,
+      interval: "5m",
+      includePrePost: false,
+    });
+
+    if (!result.quotes || result.quotes.length === 0) {
+      throw new Error("No intraday data returned");
+    }
+
+    const bars: IntradayBar[] = [];
+
+    for (const q of result.quotes) {
+      if (q.close == null || q.open == null) continue;
+
+      const d = q.date;
+      // Filter to regular trading hours (09:30-16:00 ET)
+      const hour = d.getUTCHours() - 5; // EST offset (approximate)
+      const minute = d.getUTCMinutes();
+      const totalMin = hour * 60 + minute;
+      if (totalMin < 570 || totalMin > 960) continue; // 9:30=570, 16:00=960
+
+      const hh = hour.toString().padStart(2, "0");
+      const mm = minute.toString().padStart(2, "0");
+      const timeStr = `${hh}:${mm}`;
+
+      // 12-hour label
+      let h12 = hour;
+      const suffix = h12 >= 12 ? "PM" : "AM";
+      if (h12 === 0) h12 = 12;
+      else if (h12 > 12) h12 -= 12;
+      const label = `${h12}:${mm} ${suffix}`;
+
+      bars.push({
+        time: timeStr,
+        label,
+        timestamp: d.getTime(),
+        open: q.open,
+        high: q.high ?? q.close,
+        low: q.low ?? q.close,
+        close: q.close,
+        volume: q.volume ?? 0,
+      });
+    }
+
+    if (bars.length === 0) {
+      throw new Error("No bars within trading hours");
+    }
+
+    setCache(chartCache, key, bars);
+    return bars;
+  } catch (err) {
+    throw new Error(
+      `Failed to fetch intraday data for ${symbol} on ${date}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}

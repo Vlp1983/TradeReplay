@@ -1,6 +1,10 @@
 /**
  * Generate the full contract replay — price path, P/L series,
  * metrics, and key insights.
+ *
+ * When real Yahoo intraday bars are available, uses REAL underlying
+ * prices and Black-Scholes to estimate option premiums at each tick.
+ * Falls back to an improved synthetic path with realistic microstructure.
  */
 
 import type {
@@ -9,11 +13,9 @@ import type {
   ReplayMetrics,
   KeyMoment,
   ReplayResult,
-  Ticker,
 } from "./types";
-import { getAssetClass } from "./types";
+import type { IntradayBar } from "@/lib/services/yahoo-finance";
 import {
-  getUnderlyingPrice,
   estimatePremium,
   getImpliedVol,
   generateUnderlyingPath,
@@ -22,10 +24,16 @@ import {
 } from "./pricing";
 import { getExpirationDays } from "./chain";
 
+// ─── Public API ──────────────────────────────────────────────────────
+
 /**
  * Replay a selected contract from entry to expiration.
+ * Pass real intraday bars for the underlying to get realistic pricing.
  */
-export function replayContract(contract: SelectedContract): ReplayResult {
+export function replayContract(
+  contract: SelectedContract,
+  intradayBars?: IntradayBar[]
+): ReplayResult {
   const {
     ticker,
     date,
@@ -37,70 +45,101 @@ export function replayContract(contract: SelectedContract): ReplayResult {
   } = contract;
 
   const isCall = right === "call";
-  const basePrice = getUnderlyingPrice(ticker, date, entryTime);
   const expirationDays = getExpirationDays(date, expiration);
   const baseVol = BASE_VOLATILITY[ticker] ?? 0.22;
 
-  // Generate underlying price path
-  const path = generateUnderlyingPath(
-    ticker,
-    date,
-    entryTime,
-    expirationDays,
-    basePrice,
-    baseVol
-  );
+  // ── Build underlying price series ──────────────────────────────────
+  let underlyingPrices: number[];
+  let labels: string[];
+  let times: string[];
+  let dayIndices: number[];
 
-  // Compute raw option premium at each time point
-  const totalPoints = path.prices.length;
-  const rawPremiums: number[] = [];
+  const hasRealData = intradayBars && intradayBars.length >= 5;
+
+  if (hasRealData) {
+    // Use REAL Yahoo intraday data — filter from entry time onward
+    const entryMinutes = parseTimeMinutes(entryTime);
+    const filtered = intradayBars.filter((b) => {
+      return parseTimeMinutes(b.time) >= entryMinutes;
+    });
+
+    // Need at least a few points
+    const bars = filtered.length >= 3 ? filtered : intradayBars;
+
+    underlyingPrices = bars.map((b) => b.close);
+    labels = bars.map((b) => b.label);
+    times = bars.map((b) => b.time);
+    dayIndices = bars.map(() => 0);
+  } else {
+    // Improved synthetic path with realistic microstructure
+    const path = generateRealisticPath(
+      ticker, date, entryTime, expirationDays, baseVol
+    );
+    underlyingPrices = path.prices;
+    labels = path.labels;
+    times = path.times;
+    dayIndices = path.dayIndices;
+  }
+
+  // ── Compute option premium at each point via Black-Scholes ─────────
+  const totalPoints = underlyingPrices.length;
+  const totalMinutesRemaining = expirationDays === 0
+    ? minutesUntilClose(entryTime)
+    : expirationDays * 390 + minutesUntilClose(entryTime);
+
+  const allPoints: TimePoint[] = [];
 
   for (let i = 0; i < totalPoints; i++) {
-    const S = path.prices[i];
-    const pointsRemaining = totalPoints - 1 - i;
-    const T = Math.max(pointsRemaining * (15 / (252 * 390)), 0.0001);
+    const S = underlyingPrices[i];
+    const fraction = i / Math.max(totalPoints - 1, 1);
+    const minutesLeft = totalMinutesRemaining * (1 - fraction);
+    const T = Math.max(minutesLeft / (252 * 390), 0.0001);
 
     const iv = getImpliedVol(S, strike, baseVol);
     const est = estimatePremium(S, strike, T, isCall, iv);
     let premium = est.premium;
 
     // At expiration (last point), use intrinsic value
-    if (i === totalPoints - 1) {
+    if (i === totalPoints - 1 && expirationDays === 0) {
       premium = isCall
         ? Math.max(S - strike, 0)
         : Math.max(strike - S, 0);
       premium = +premium.toFixed(2);
     }
 
-    rawPremiums.push(premium);
+    allPoints.push({
+      time: times[i],
+      label: labels[i],
+      price: premium,
+      pl_dollar: 0,
+      pl_pct: 0,
+      dayIndex: dayIndices[i],
+    });
   }
 
-  // ── Anchor to actual entryPremium ──────────────────────────────────
-  // The raw estimate at t=0 may differ from the actual entryPremium
-  // (especially when Yahoo data is used). Scale the path so the first
-  // point matches exactly, P/L starts at $0, and the entry line is correct.
-  const rawEntry = rawPremiums[0];
-  const offset = entryPremium - rawEntry;
+  // ── Anchor to actual entry premium ─────────────────────────────────
+  // Scale the entire premium path proportionally so the first point
+  // matches the real entry premium. This preserves the shape/direction
+  // while anchoring to reality.
+  const rawEntry = allPoints[0]?.price ?? entryPremium;
+  const scaleFactor = rawEntry > 0.01 ? entryPremium / rawEntry : 1;
 
-  const allPoints: TimePoint[] = [];
-  for (let i = 0; i < totalPoints; i++) {
-    // Apply offset with decay — full offset at entry, zero at expiration
-    const t = i / Math.max(totalPoints - 1, 1);
-    const decay = 1 - t; // linear decay from 1→0
-    const adjusted = +(rawPremiums[i] + offset * decay).toFixed(2);
-    const premium = Math.max(adjusted, 0.01);
+  for (let i = 0; i < allPoints.length; i++) {
+    // Blend scale toward 1.0 at expiration so intrinsic value is preserved
+    const t = i / Math.max(allPoints.length - 1, 1);
+    const blendedScale = scaleFactor + (1 - scaleFactor) * t * 0.5;
+    const premium = Math.max(+(allPoints[i].price * blendedScale).toFixed(2), 0.01);
 
-    const plDollar = +((premium - entryPremium) * 100).toFixed(0);
-    const plPct = +(((premium - entryPremium) / entryPremium) * 100).toFixed(1);
+    allPoints[i].price = premium;
+    allPoints[i].pl_dollar = +((premium - entryPremium) * 100).toFixed(0);
+    allPoints[i].pl_pct = +(((premium - entryPremium) / entryPremium) * 100).toFixed(1);
+  }
 
-    allPoints.push({
-      time: path.times[i],
-      label: path.labels[i],
-      price: premium,
-      pl_dollar: plDollar,
-      pl_pct: plPct,
-      dayIndex: path.dayIndices[i],
-    });
+  // Force first point to exact entry (avoid rounding drift)
+  if (allPoints.length > 0) {
+    allPoints[0].price = entryPremium;
+    allPoints[0].pl_dollar = 0;
+    allPoints[0].pl_pct = 0;
   }
 
   // Split into same-day and full series
@@ -110,10 +149,8 @@ export function replayContract(contract: SelectedContract): ReplayResult {
   // Compute metrics
   const metrics = computeMetrics(allPoints, entryPremium);
 
-  // Generate key insights (trade moments + news context)
-  const tradeInsights = detectTradeInsights(allPoints, sameDayPoints, entryPremium);
-  const newsInsights = generateNewsContext(ticker as Ticker, date, entryTime, allPoints);
-  const keyMoments = mergeInsights(tradeInsights, newsInsights);
+  // Generate trade insights (key moments in price action)
+  const keyMoments = detectTradeInsights(allPoints, sameDayPoints, entryPremium);
 
   return {
     contract,
@@ -123,6 +160,140 @@ export function replayContract(contract: SelectedContract): ReplayResult {
     keyMoments,
   };
 }
+
+// ─── Improved synthetic path ─────────────────────────────────────────
+
+/**
+ * Generates a much more realistic synthetic underlying path that includes:
+ * - Opening volatility burst
+ * - Mid-session mean reversion / consolidation
+ * - Power hour momentum
+ * - Random support/resistance bounces
+ * - Microstructure noise on every tick
+ */
+function generateRealisticPath(
+  ticker: string,
+  date: string,
+  entryTime: string,
+  expirationDays: number,
+  sigma: number
+): { times: string[]; labels: string[]; prices: number[]; dayIndices: number[] } {
+  // Fall back to the base GBM path first
+  const { getUnderlyingPrice } = require("./pricing");
+  const basePrice = getUnderlyingPrice(ticker, date, entryTime) as number;
+
+  const rng = seedFromMoment(ticker, date, entryTime, 77);
+  const dt = 5 / (252 * 390); // 5-minute steps (more granular than 15m)
+
+  const times: string[] = [];
+  const labels: string[] = [];
+  const prices: number[] = [];
+  const dayIndices: number[] = [];
+
+  let S = basePrice;
+
+  const entryHour = parseInt(entryTime.split(":")[0]);
+  const entryMin = parseInt(entryTime.split(":")[1]);
+  const entryBucket = ((entryHour - 9) * 60 + entryMin - 30) / 5; // 5-min buckets from 9:30
+
+  for (let day = 0; day <= expirationDays; day++) {
+    const startBucket = day === 0 ? Math.max(0, Math.floor(entryBucket)) : 0;
+    const endBucket = 78; // 09:30 to 16:00 = 78 five-minute buckets
+
+    // Day trend — slight directional bias
+    const dayBias = (rng() - 0.48) * 0.002;
+
+    for (let b = startBucket; b <= endBucket; b++) {
+      const totalMinutes = b * 5 + 30; // minutes after 9:00
+      const hour = 9 + Math.floor(totalMinutes / 60);
+      const minute = totalMinutes % 60;
+      const timeStr = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+
+      // 12-hour label
+      let h12 = hour;
+      const suffix = h12 >= 12 ? "PM" : "AM";
+      if (h12 === 0) h12 = 12;
+      else if (h12 > 12) h12 -= 12;
+      const timeLabel = `${h12}:${minute.toString().padStart(2, "0")} ${suffix}`;
+
+      if (day === 0 && b === startBucket) {
+        // Entry point
+      } else {
+        // ── Intraday volatility regime ──────────────────────────
+        let localVol = sigma;
+        const sessionProgress = b / endBucket; // 0→1 through the day
+
+        // Opening 30 min: elevated volatility (1.5x)
+        if (sessionProgress < 0.06) {
+          localVol *= 1.5 + rng() * 0.5;
+        }
+        // Mid-day lull (11:30-14:00): compressed vol (0.6-0.8x)
+        else if (sessionProgress > 0.25 && sessionProgress < 0.58) {
+          localVol *= 0.6 + rng() * 0.2;
+        }
+        // Power hour (15:00-16:00): elevated vol (1.2-1.6x)
+        else if (sessionProgress > 0.85) {
+          localVol *= 1.2 + rng() * 0.4;
+        }
+
+        // ── Mean reversion component ────────────────────────────
+        const deviation = (S - basePrice) / basePrice;
+        const reversion = -deviation * 0.02;
+
+        // ── Momentum / trend component ──────────────────────────
+        const momentum = dayBias * (1 + sessionProgress);
+
+        // ── Random jumps (1% chance per tick of larger move) ────
+        const jumpChance = rng();
+        const jump = jumpChance < 0.01
+          ? (rng() - 0.5) * sigma * 4
+          : 0;
+
+        // ── GBM with all components ─────────────────────────────
+        const u1 = Math.max(rng(), 1e-10);
+        const u2 = rng();
+        const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+
+        const drift = reversion + momentum;
+        S = S * Math.exp(
+          (drift - (localVol * localVol) / 2) * dt +
+          localVol * Math.sqrt(dt) * z +
+          jump
+        );
+      }
+
+      const dayLabel = day === 0 ? "Today" : `Day +${day}`;
+
+      times.push(timeStr);
+      labels.push(day === 0 ? timeLabel : `${dayLabel} ${timeLabel}`);
+      prices.push(+S.toFixed(S < 1 ? 4 : 2));
+      dayIndices.push(day);
+    }
+
+    // Overnight gap for multi-day
+    if (day < expirationDays) {
+      const gapDirection = rng() - 0.5;
+      S = S * (1 + gapDirection * sigma * 0.5);
+    }
+  }
+
+  return { times, labels, prices, dayIndices };
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+function parseTimeMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesUntilClose(entryTime: string): number {
+  const close = 16 * 60; // 16:00
+  const entry = parseTimeMinutes(entryTime);
+  return Math.max(close - entry, 15);
+}
+
+// ─── Metrics ─────────────────────────────────────────────────────────
 
 function computeMetrics(
   points: TimePoint[],
@@ -138,7 +309,7 @@ function computeMetrics(
 
   const lastPoint = points[points.length - 1];
 
-  // Optimal exit: first point with ≥50% gain, OR peak before -30% retrace
+  // Optimal exit: first point with >= 50% gain, OR peak before -30% retrace
   let optimalPt = lastPoint;
   let peak = points[0];
   for (const pt of points) {
@@ -171,7 +342,7 @@ function computeMetrics(
   };
 }
 
-// ─── Trade insights (formerly "key moments") ────────────────────────
+// ─── Trade insights ──────────────────────────────────────────────────
 
 function detectTradeInsights(
   allPoints: TimePoint[],
@@ -198,7 +369,7 @@ function detectTradeInsights(
     if (pts[i].pl_dollar < pts[troughIdx].pl_dollar) troughIdx = i;
   }
 
-  // 2. First significant move (±15%)
+  // 2. First significant move (+/-15%)
   for (let i = 1; i < pts.length; i++) {
     if (Math.abs(pts[i].pl_pct) >= 15) {
       moments.push({
@@ -231,11 +402,12 @@ function detectTradeInsights(
     });
   }
 
-  // 5. Detect support/resistance-like moments
-  for (let i = 2; i < pts.length - 2; i++) {
-    const prev = pts[i - 2].pl_dollar;
+  // 5. Support/resistance-like moments
+  const step = Math.max(2, Math.floor(pts.length / 40));
+  for (let i = step; i < pts.length - step; i++) {
+    const prev = pts[i - step].pl_dollar;
     const curr = pts[i].pl_dollar;
-    const next = pts[i + 2].pl_dollar;
+    const next = pts[i + step].pl_dollar;
 
     if (curr < prev && curr < next && curr - prev < -20 && next - curr > 20) {
       if (!moments.some((m) => m.label === "Support held")) {
@@ -260,7 +432,7 @@ function detectTradeInsights(
     }
   }
 
-  // 6. Theta decay observation (for multi-day)
+  // 6. Theta decay overnight (multi-day)
   if (allPoints.length > sameDayPoints.length) {
     const day1Close = allPoints.filter((p) => p.dayIndex === 0);
     const day2Open = allPoints.find((p) => p.dayIndex === 1);
@@ -286,149 +458,13 @@ function detectTradeInsights(
     type: "trade",
   });
 
+  // Cap at 8 items
+  if (moments.length > 8) {
+    const entry = moments[0];
+    const close = moments[moments.length - 1];
+    const middle = moments.slice(1, -1).slice(0, 6);
+    return [entry, ...middle, close];
+  }
+
   return moments;
-}
-
-// ─── News context generation ─────────────────────────────────────────
-
-interface NewsTemplate {
-  label: string;
-  templates: string[];
-}
-
-const EQUITY_NEWS: NewsTemplate[] = [
-  { label: "Earnings watch", templates: [
-    "Quarterly earnings report approaching — elevated IV expected across the options chain.",
-    "Post-earnings volatility crush likely as implied vol is elevated ahead of results.",
-  ]},
-  { label: "Sector rotation", templates: [
-    "Institutional flows showing rotation into the sector — unusual call volume detected.",
-    "Sector ETFs seeing heavy put buying — hedging activity suggesting risk-off sentiment.",
-  ]},
-  { label: "Fed policy impact", templates: [
-    "FOMC meeting minutes signaling rate trajectory — equity vol elevated across indices.",
-    "Treasury yields moving sharply — rate-sensitive names reacting to Fed commentary.",
-  ]},
-  { label: "Market sentiment", templates: [
-    "VIX elevated above 20 — broader market uncertainty lifting option premiums.",
-    "Put/call ratio skewing bearish across the market — protective positioning increasing.",
-    "Bullish sentiment rising — call skew suggests institutional accumulation.",
-  ]},
-  { label: "Technical level", templates: [
-    "Price testing key moving average — watch for breakout or rejection at this level.",
-    "Volume profile shows major support nearby — options market pricing in a bounce.",
-  ]},
-];
-
-const FUTURES_NEWS: NewsTemplate[] = [
-  { label: "Macro data release", templates: [
-    "CPI/PPI data release impacting futures pricing — volatility spike across contracts.",
-    "Non-farm payroll report ahead — futures positioning showing hedging activity.",
-  ]},
-  { label: "Geopolitical risk", templates: [
-    "Geopolitical tensions elevating crude and gold — flight-to-safety premium building.",
-    "Trade policy uncertainty lifting futures vol — hedging costs increasing.",
-  ]},
-  { label: "Supply/demand shift", templates: [
-    "OPEC production decision pending — crude oil vol curve steepening.",
-    "Inventory data diverging from expectations — commodity futures repricing.",
-    "Central bank gold purchases driving spot premium — options skew reflecting bullish bias.",
-  ]},
-];
-
-const CRYPTO_NEWS: NewsTemplate[] = [
-  { label: "ETF flow signal", templates: [
-    "Spot ETF inflows accelerating — institutional adoption driving bullish sentiment.",
-    "ETF outflows detected — short-term selling pressure as institutions rebalance.",
-  ]},
-  { label: "On-chain activity", templates: [
-    "Large wallet movements detected on-chain — whale activity suggesting position changes.",
-    "Exchange outflows rising — supply being moved to cold storage, bullish signal.",
-  ]},
-  { label: "Regulatory development", templates: [
-    "Regulatory clarity improving in major markets — crypto vol compressing on reduced uncertainty.",
-    "New regulatory proposal introduced — market pricing in compliance costs and risk.",
-  ]},
-  { label: "Network event", templates: [
-    "Major protocol upgrade approaching — volatility expected around implementation date.",
-    "Staking yields shifting — capital rotation between protocols impacting price.",
-  ]},
-];
-
-/**
- * Generate deterministic news-like context insights for the replay period.
- * Uses the seeded PRNG to pick 1–2 relevant news items based on the ticker's
- * asset class and the simulated price action.
- */
-function generateNewsContext(
-  ticker: Ticker,
-  date: string,
-  entryTime: string,
-  points: TimePoint[]
-): KeyMoment[] {
-  const rng = seedFromMoment(ticker, date, entryTime, 99);
-  const ac = getAssetClass(ticker);
-
-  const pool =
-    ac === "futures" ? FUTURES_NEWS :
-    ac === "crypto" ? CRYPTO_NEWS :
-    EQUITY_NEWS;
-
-  const news: KeyMoment[] = [];
-
-  // Pick 1–2 news items deterministically
-  const count = rng() > 0.4 ? 2 : 1;
-  const usedIndices = new Set<number>();
-
-  for (let n = 0; n < count; n++) {
-    let idx = Math.floor(rng() * pool.length);
-    // Avoid duplicates
-    while (usedIndices.has(idx) && usedIndices.size < pool.length) {
-      idx = (idx + 1) % pool.length;
-    }
-    usedIndices.add(idx);
-
-    const item = pool[idx];
-    const templateIdx = Math.floor(rng() * item.templates.length);
-
-    // Place the news insight near the start or middle of the chart
-    const pointIdx = n === 0
-      ? Math.min(1, points.length - 1) // near entry
-      : Math.floor(points.length * 0.4); // mid-session
-
-    news.push({
-      time: points[pointIdx]?.label ?? "",
-      label: item.label,
-      reason: item.templates[templateIdx],
-      type: "news",
-    });
-  }
-
-  return news;
-}
-
-/**
- * Merge trade insights and news context, interleaving by time position.
- * Entry always first, close always last, news woven in between.
- */
-function mergeInsights(
-  trade: KeyMoment[],
-  news: KeyMoment[]
-): KeyMoment[] {
-  if (trade.length === 0) return news;
-
-  const entry = trade[0]; // always first
-  const close = trade[trade.length - 1]; // always last
-  const middle = trade.slice(1, -1);
-
-  // Insert news after entry, before the trade middle items
-  const merged = [entry, ...news, ...middle, close];
-
-  // Cap at 10 items total
-  if (merged.length > 10) {
-    const keep = [entry, ...news, ...middle.slice(0, 10 - 2 - news.length), close];
-    return keep;
-  }
-
-  return merged;
 }
