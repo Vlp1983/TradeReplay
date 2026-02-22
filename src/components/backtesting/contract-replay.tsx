@@ -11,11 +11,13 @@ import { formatDateDisplay, getExpirationLabel } from "@/lib/engine/dates";
 interface ContractReplayProps {
   result: ReplayResult;
   onNewBacktest: () => void;
+  onPickAnother: () => void;
 }
 
 export function ContractReplay({
   result,
   onNewBacktest,
+  onPickAnother,
 }: ContractReplayProps) {
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
@@ -75,8 +77,8 @@ export function ContractReplay({
 
       {/* Actions */}
       <div className="flex flex-col gap-3 sm:flex-row">
-        <Button variant="outline" disabled>
-          Save to Library (coming soon)
+        <Button variant="outline" onClick={onPickAnother}>
+          Pick another contract
         </Button>
         <Button onClick={onNewBacktest}>New Backtest</Button>
       </div>

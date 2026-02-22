@@ -47,12 +47,43 @@ export default function BacktestingPage() {
         "0dte"
       );
       setChainData(chain);
-      setStep("chain");
       setLoadingChain(false);
 
-      setTimeout(() => {
-        chainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 100);
+      // Auto-replay the ATM call contract
+      const atmRow = chain.calls.find((r) => r.isATM);
+      if (atmRow) {
+        const atmContract: SelectedContract = {
+          ticker: chain.ticker,
+          date: chain.date,
+          entryTime: chain.entryTime,
+          expiration: chain.expiration,
+          strike: atmRow.strike,
+          right: "call",
+          entryPremium: atmRow.premium,
+          confidence: atmRow.confidence,
+        };
+
+        setLoadingReplay(true);
+        setTimeout(() => {
+          const result = replayContract(atmContract);
+          setReplayResult(result);
+          setStep("replay");
+          setLoadingReplay(false);
+
+          setTimeout(() => {
+            replayRef.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }, 100);
+        }, 300);
+      } else {
+        // Fallback: show chain if no ATM found
+        setStep("chain");
+        setTimeout(() => {
+          chainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 100);
+      }
     }, 300);
   }, []);
 
@@ -88,6 +119,14 @@ export default function BacktestingPage() {
         });
       }, 100);
     }, 400);
+  }, []);
+
+  const handlePickAnother = useCallback(() => {
+    setReplayResult(null);
+    setStep("chain");
+    setTimeout(() => {
+      chainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
   }, []);
 
   const handleNewBacktest = useCallback(() => {
@@ -130,9 +169,9 @@ export default function BacktestingPage() {
               loading={loadingChain}
             />
 
-            {/* Step 2 — chain snapshot */}
+            {/* Step 2 — chain snapshot (only when user picks another contract) */}
             <AnimatePresence>
-              {chainData && step !== "moment" && (
+              {chainData && step === "chain" && (
                 <motion.div
                   ref={chainRef}
                   initial={{ opacity: 0, y: 16 }}
@@ -163,6 +202,7 @@ export default function BacktestingPage() {
                   <ContractReplay
                     result={replayResult}
                     onNewBacktest={handleNewBacktest}
+                    onPickAnother={handlePickAnother}
                   />
                 </motion.div>
               )}
