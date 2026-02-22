@@ -18,7 +18,7 @@ import type {
   ReplayResult,
   Right,
 } from "@/lib/engine/types";
-import { generateChain } from "@/lib/engine/chain";
+import { fetchLiveChain } from "@/lib/engine/fetch-chain";
 import { replayContract } from "@/lib/engine/replay";
 
 type Step = "moment" | "chain" | "replay";
@@ -30,6 +30,7 @@ export default function BacktestingPage() {
   const [loadingChain, setLoadingChain] = useState(false);
   const [loadingReplay, setLoadingReplay] = useState(false);
   const [moment, setMoment] = useState<MomentSelection | null>(null);
+  const [dataSource, setDataSource] = useState<"yahoo" | "synthetic">("synthetic");
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
@@ -71,24 +72,24 @@ export default function BacktestingPage() {
   );
 
   const handleLoadChain = useCallback(
-    (selection: MomentSelection) => {
+    async (selection: MomentSelection) => {
       setMoment(selection);
       setLoadingChain(true);
       setReplayResult(null);
 
-      setTimeout(() => {
-        const chain = generateChain(
-          selection.ticker,
-          selection.date,
-          selection.entryTime,
-          "0dte"
-        );
-        setChainData(chain);
-        setLoadingChain(false);
+      const { chain, source } = await fetchLiveChain(
+        selection.ticker,
+        selection.date,
+        selection.entryTime,
+        "0dte"
+      );
 
-        // Auto-replay ATM call
-        replayAtm(chain, "call");
-      }, 300);
+      setChainData(chain);
+      setDataSource(source);
+      setLoadingChain(false);
+
+      // Auto-replay ATM call
+      replayAtm(chain, "call");
     },
     [replayAtm]
   );
@@ -102,15 +103,20 @@ export default function BacktestingPage() {
   );
 
   const handleExpirationChange = useCallback(
-    (exp: Expiration) => {
+    async (exp: Expiration) => {
       if (!moment) return;
-      const chain = generateChain(
+      setLoadingChain(true);
+
+      const { chain, source } = await fetchLiveChain(
         moment.ticker,
         moment.date,
         moment.entryTime,
         exp
       );
+
       setChainData(chain);
+      setDataSource(source);
+      setLoadingChain(false);
       setReplayResult(null);
       setStep("chain");
     },
@@ -156,6 +162,7 @@ export default function BacktestingPage() {
     setChainData(null);
     setReplayResult(null);
     setMoment(null);
+    setDataSource("synthetic");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -173,13 +180,23 @@ export default function BacktestingPage() {
                 </Link>
               </Button>
               <h1 className="text-2xl font-bold text-text-primary">
-                Options Backtesting
+                AI Backtesting
               </h1>
+              {chainData && (
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
+                    dataSource === "yahoo"
+                      ? "bg-green-500/10 text-green-400"
+                      : "bg-yellow-500/10 text-yellow-400"
+                  }`}
+                >
+                  {dataSource === "yahoo" ? "Live Yahoo Data" : "Synthetic Estimates"}
+                </span>
+              )}
             </div>
             <p className="text-[15px] leading-relaxed text-text-secondary">
-              Select a moment from the past, pick an options contract, and see
-              how much profit you would have made. Ideal for backtesting
-              callouts or trade strategies.
+              Select an instrument, pick a contract, and see how much profit
+              you would have made. Supports options, futures, and crypto.
             </p>
           </div>
 
