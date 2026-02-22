@@ -122,12 +122,20 @@ export default function BacktestingPage() {
   }, []);
 
   const handlePickAnother = useCallback(() => {
-    setReplayResult(null);
+    // Keep replayResult so user can navigate back
     setStep("chain");
     setTimeout(() => {
       chainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
   }, []);
+
+  const handleBackToReplay = useCallback(() => {
+    if (!replayResult) return;
+    setStep("replay");
+    setTimeout(() => {
+      replayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  }, [replayResult]);
 
   const handleNewBacktest = useCallback(() => {
     setStep("moment");
@@ -183,6 +191,7 @@ export default function BacktestingPage() {
                     chain={chainData}
                     onExpirationChange={handleExpirationChange}
                     onReplayContract={handleReplayContract}
+                    onBackToReplay={replayResult ? handleBackToReplay : undefined}
                     loading={loadingReplay}
                   />
                 </motion.div>

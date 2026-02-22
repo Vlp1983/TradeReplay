@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ArrowRightLeft } from "lucide-react";
 import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
 import { KeyMomentsList } from "./key-moments-list";
@@ -31,30 +32,48 @@ export function ContractReplay({
       {/* Header */}
       <div className="mb-1 flex items-center gap-2">
         <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-[13px] font-semibold text-accent">
-          3
+          2
         </span>
         <h2 className="text-lg font-semibold text-text-primary">
-          See your results
+          Your Results
         </h2>
       </div>
-      <p className="mb-3 text-[13px] text-text-muted">
-        Here&apos;s how this contract played out from entry to close.
-      </p>
 
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-text-primary">
-          {contractLabel}
-        </span>
-        <span className="text-[13px] text-text-muted">
-          Exp {expLabel}
-        </span>
-        <span className="text-[13px] text-text-muted">
-          Entry {contract.entryTime} ET
-        </span>
-        <Badge variant="outline" className="text-[11px]">
-          Estimated (MVP)
-        </Badge>
+      {/* Contract info bar + pick another */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-bg px-4 py-3 mt-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-text-primary">
+            {contractLabel}
+          </span>
+          <Badge className="bg-accent/15 text-accent border-0 text-[10px] font-semibold">
+            ATM
+          </Badge>
+          <span className="text-[13px] text-text-muted">
+            Exp {expLabel}
+          </span>
+          <span className="text-[13px] text-text-muted">
+            Entry {contract.entryTime} ET
+          </span>
+        </div>
+        <button
+          onClick={onPickAnother}
+          className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-accent"
+        >
+          <ArrowRightLeft className="h-3 w-3" />
+          Pick another contract
+        </button>
       </div>
+
+      <p className="mb-5 text-[12px] text-text-muted">
+        We auto-selected the at-the-money (ATM) call. Want to try an
+        out-of-the-money (OTM) call or put?{" "}
+        <button
+          onClick={onPickAnother}
+          className="font-medium text-accent underline-offset-2 hover:underline"
+        >
+          Browse all strikes
+        </button>
+      </p>
 
       {/* Summary cards */}
       <div className="mb-5">
@@ -77,9 +96,6 @@ export function ContractReplay({
 
       {/* Actions */}
       <div className="flex flex-col gap-3 sm:flex-row">
-        <Button variant="outline" onClick={onPickAnother}>
-          Pick another contract
-        </Button>
         <Button onClick={onNewBacktest}>New Backtest</Button>
       </div>
     </div>

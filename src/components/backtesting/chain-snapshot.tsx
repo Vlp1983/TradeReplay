@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowUpRight, ArrowDownRight, MousePointerClick } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, ArrowLeft, MousePointerClick } from "lucide-react";
 import type {
   ChainData,
   ChainRow,
@@ -17,6 +17,7 @@ interface ChainSnapshotProps {
   chain: ChainData;
   onExpirationChange: (exp: Expiration) => void;
   onReplayContract: (contract: SelectedContract) => void;
+  onBackToReplay?: () => void;
   loading?: boolean;
 }
 
@@ -24,6 +25,7 @@ export function ChainSnapshot({
   chain,
   onExpirationChange,
   onReplayContract,
+  onBackToReplay,
   loading,
 }: ChainSnapshotProps) {
   const atmStrike = chain.calls.find((r) => r.isATM)?.strike ?? null;
@@ -63,6 +65,17 @@ export function ChainSnapshot({
 
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
+      {/* Back to results link */}
+      {onBackToReplay && (
+        <button
+          onClick={onBackToReplay}
+          className="mb-3 flex items-center gap-1.5 text-[13px] font-medium text-text-muted transition-colors hover:text-accent"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to results
+        </button>
+      )}
+
       {/* Header */}
       <div className="mb-1 flex items-center gap-2">
         <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-[13px] font-semibold text-accent">
@@ -73,7 +86,7 @@ export function ChainSnapshot({
         </h2>
       </div>
       <p className="mb-4 text-[13px] text-text-muted">
-        We defaulted to the at-the-money call. Tap any strike below to switch.
+        Select an OTM call or put to replay a different strike.
         &mdash; {chain.ticker} {formatDateDisplay(chain.date)} {chain.entryTime}{" "}
         ET &mdash; ${chain.underlyingPrice.toFixed(2)}
       </p>
