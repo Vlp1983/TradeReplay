@@ -1,10 +1,17 @@
-import { StubPage } from "@/components/landing/stub-page";
+"use client";
+
+import { Navbar } from "@/components/landing/navbar";
+import { PricingSection } from "@/components/landing/pricing-section";
+import { Footer } from "@/components/landing/footer";
 
 export default function PricingPage() {
   return (
-    <StubPage
-      title="Pricing"
-      description="Start free. Upgrade after you've used it. Plans for every level of trader."
-    />
+    <>
+      <Navbar />
+      <main className="min-h-screen pt-[72px]">
+        <PricingSection />
+      </main>
+      <Footer />
+    </>
   );
 }

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const navLinks = [
-  { label: "Options Backtesting", href: "/backtesting" },
+  { label: "AI Backtesting", href: "/backtesting" },
   { label: "Guru Score Board", href: "/scoreboard" },
   { label: "Pricing", href: "/pricing" },
   { label: "FAQ", href: "/faq" },

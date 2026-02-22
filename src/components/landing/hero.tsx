@@ -21,14 +21,15 @@ export function Hero() {
           </Badge>
 
           <h1 className="text-[38px] font-bold leading-tight text-text-primary md:text-[56px]">
-            See the replay.
+            Replay any trade.
             <br />
-            See the score.
+            Rank any guru.
           </h1>
 
           <p className="mt-5 max-w-lg text-base leading-relaxed text-text-secondary md:text-lg">
-            Backtest options contracts from any past moment and evaluate signal
-            performance with the Guru Score Board and Guru Report Cards.
+            AI-powered backtesting for options, crypto, and futures. Pick a
+            moment, replay the contract, and see exactly what would have
+            happened. Then compare signal providers on real results.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -41,7 +42,8 @@ export function Hero() {
           </div>
 
           <p className="mt-5 text-[13px] text-text-muted">
-            No brokerage connection required &bull; Educational analysis only
+            Powered by AI &bull; No brokerage connection required &bull;
+            Educational analysis only
           </p>
         </motion.div>
 

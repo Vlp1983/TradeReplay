@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Separator } from "@/components/ui/separator";
 
 const productLinks = [
-  { label: "Options Backtesting", href: "/backtesting" },
+  { label: "AI Backtesting", href: "/backtesting" },
   { label: "Guru Score Board", href: "/scoreboard" },
   { label: "Guru Report Cards", href: "/scoreboard" },
 ];

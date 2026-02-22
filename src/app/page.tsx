@@ -23,10 +23,10 @@ export default function LandingPage() {
         {/* Section B — Why */}
         <WhySection />
 
-        {/* Section C — Options Backtesting (visual left, copy right) */}
+        {/* Section C — AI Backtesting (visual left, copy right) */}
         <FeatureSection
-          title="Options Backtesting"
-          body="Choose a ticker, a past date, and a time-of-day. Select a contract from the chain snapshot and replay how it performed—same day and to expiration."
+          title="AI Backtesting"
+          body="Choose a ticker, a past date, and a time-of-day. Select a contract from the chain snapshot and replay how it performed—same day and to expiration. Powered by AI."
           bullets={[
             "Point-in-time contract replay (not strategy guessing)",
             "P/L in $ and % per contract",

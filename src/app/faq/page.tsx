@@ -1,10 +1,17 @@
-import { StubPage } from "@/components/landing/stub-page";
+"use client";
+
+import { Navbar } from "@/components/landing/navbar";
+import { FAQSection } from "@/components/landing/faq-section";
+import { Footer } from "@/components/landing/footer";
 
 export default function FAQPage() {
   return (
-    <StubPage
-      title="FAQ"
-      description="Answers to common questions about TradeReplay, data accuracy, and the Guru scoring methodology."
-    />
+    <>
+      <Navbar />
+      <main className="min-h-screen pt-[72px]">
+        <FAQSection />
+      </main>
+      <Footer />
+    </>
   );
 }
