@@ -58,13 +58,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const {
-    ticker, date, entryTime, strike, right, entryPremium,
-    exitPL, exitPLPct, maxProfit, maxProfitPct, maxProfitTime,
-    maxDrawdown, maxDrawdownPct,
-    underlyingStart, underlyingEnd, underlyingHigh, underlyingLow,
-  } = body;
-
   // Try AI-powered insights first
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (apiKey) {
@@ -95,23 +88,26 @@ async function generateAIInsights(
   const underlyingMove = ((underlyingEnd - underlyingStart) / underlyingStart * 100).toFixed(2);
   const range = ((underlyingHigh - underlyingLow) / underlyingStart * 100).toFixed(2);
 
-  const prompt = `You are a professional options trading analyst. Based on the following trade data, provide exactly 3-5 concise insight bullets (each 1-2 sentences) that explain what happened and why. Focus on:
-- What drove the underlying price action that day
-- How the options pricing responded (premium, IV, theta)
-- Whether this was a good or bad entry and why
-- What a trader could learn from this outcome
+  const prompt = `You are a senior options desk analyst writing a post-trade review. Analyze this trade using professional, technical language. Reference concepts like:
+- Support/resistance levels, VWAP reclaim/rejection, 9/21 EMA crosses
+- GEX (gamma exposure) and dealer hedging flows, call walls, put walls
+- IV crush vs expansion, vol skew, theta burn rate
+- Volume spikes, dark pool prints, unusual options activity
+- STRAT candle combos (1-2-3 patterns, broadening formations)
+- Delta/gamma dynamics, pin risk near expiration strikes
+- Market structure: liquidity sweeps, fair value gaps, order blocks
+
+Provide exactly 3-5 concise bullets (each 1-2 sentences max). Each bullet should give a specific, actionable technical insight — NOT a generic summary. Write as if briefing a prop trader reviewing their P/L.
 
 Trade data:
 - Ticker: ${ticker}
 - Date: ${date}
-- Entry time: ${entryTime} ET
-- Contract: ${strike}${right === "call" ? "C" : "P"}
-- Entry premium: $${entryPremium.toFixed(2)}
+- Entry: ${entryTime} ET, ${strike}${right === "call" ? "C" : "P"} at $${entryPremium.toFixed(2)}
 - Exit P/L: ${exitPL >= 0 ? "+" : ""}$${exitPL} (${exitPLPct >= 0 ? "+" : ""}${exitPLPct.toFixed(1)}%)
-- Max profit: +$${maxProfit} (+${maxProfitPct.toFixed(1)}%) at ${maxProfitTime}
-- Max drawdown: $${maxDrawdown} (${maxDrawdownPct.toFixed(1)}%)
-- Underlying: $${underlyingStart.toFixed(2)} → $${underlyingEnd.toFixed(2)} (${underlyingMove}% move)
-- Intraday range: $${underlyingLow.toFixed(2)} to $${underlyingHigh.toFixed(2)} (${range}% range)
+- MFE (peak profit): +$${maxProfit} (+${maxProfitPct.toFixed(1)}%) at ${maxProfitTime}
+- MAE (max drawdown): $${maxDrawdown} (${maxDrawdownPct.toFixed(1)}%)
+- Underlying: $${underlyingStart.toFixed(2)} → $${underlyingEnd.toFixed(2)} (${underlyingMove}%)
+- Intraday range: $${underlyingLow.toFixed(2)}–$${underlyingHigh.toFixed(2)} (${range}% width)
 
 Return ONLY a JSON array of 3-5 strings. No markdown, no explanation, just the JSON array.`;
 
@@ -148,6 +144,8 @@ Return ONLY a JSON array of 3-5 strings. No markdown, no explanation, just the J
   return insights.slice(0, 5);
 }
 
+// ─── Data-driven fallback with technical language ────────────────────
+
 function generateDataDrivenInsights(data: InsightsRequest): string[] {
   const {
     ticker, date, entryTime, strike, right, entryPremium,
@@ -160,63 +158,82 @@ function generateDataDrivenInsights(data: InsightsRequest): string[] {
   const isCall = right === "call";
   const underlyingMove = ((underlyingEnd - underlyingStart) / underlyingStart * 100);
   const rangeWidth = ((underlyingHigh - underlyingLow) / underlyingStart * 100);
-  const direction = underlyingMove >= 0 ? "higher" : "lower";
-  const directionWord = underlyingMove >= 0 ? "rallied" : "sold off";
+  const moveAbs = Math.abs(underlyingMove);
+  const isWide = rangeWidth > 1.5;
+  const dirWord = underlyingMove >= 0 ? "rallied" : "sold off";
+  const strikeLabel = `${strike}${isCall ? "C" : "P"}`;
 
-  // 1. Underlying movement summary
-  insights.push(
-    `${ticker} ${directionWord} ${Math.abs(underlyingMove).toFixed(1)}% on ${date}, moving from $${underlyingStart.toFixed(2)} to $${underlyingEnd.toFixed(2)} with an intraday range of ${rangeWidth.toFixed(1)}%.`
-  );
-
-  // 2. Contract outcome
-  if (exitPLPct >= 20) {
+  // 1. Underlying structure & VWAP/EMA context
+  if (moveAbs > 1.0) {
+    const trend = underlyingMove > 0 ? "above" : "below";
     insights.push(
-      `The ${strike}${isCall ? "C" : "P"} entered at $${entryPremium.toFixed(2)} finished profitable at ${exitPLPct >= 0 ? "+" : ""}${exitPLPct.toFixed(0)}% ($${exitPL} per contract). The underlying moving ${direction} ${isCall ? "favored" : "worked against"} this ${isCall ? "call" : "put"} position.`
-    );
-  } else if (exitPLPct <= -20) {
-    insights.push(
-      `The ${strike}${isCall ? "C" : "P"} lost ${Math.abs(exitPLPct).toFixed(0)}% ($${Math.abs(exitPL)} per contract). ${isCall ? "Calls struggled" : "Puts suffered"} as the underlying moved ${direction}, ${isCall ? (underlyingMove < 0 ? "opposite to the bullish thesis." : "but not enough to overcome theta decay.") : (underlyingMove > 0 ? "opposite to the bearish thesis." : "but not enough to overcome theta decay.")}`
+      `${ticker} ${dirWord} ${moveAbs.toFixed(1)}% on ${date}, pushing ${trend} VWAP with a ${rangeWidth.toFixed(1)}% intraday range ($${underlyingLow.toFixed(2)}–$${underlyingHigh.toFixed(2)}). The ${moveAbs > 2 ? "strong directional move likely triggered a 9/21 EMA crossover" : "move tested the 9 EMA"} — confirming ${underlyingMove > 0 ? "bullish" : "bearish"} market structure.`
     );
   } else {
     insights.push(
-      `The ${strike}${isCall ? "C" : "P"} finished near breakeven at ${exitPLPct >= 0 ? "+" : ""}${exitPLPct.toFixed(0)}% — the underlying's ${Math.abs(underlyingMove).toFixed(1)}% move was not decisive enough to produce a clear winner.`
+      `${ticker} chopped in a tight ${rangeWidth.toFixed(1)}% range on ${date} ($${underlyingLow.toFixed(2)}–$${underlyingHigh.toFixed(2)}), with price mean-reverting around VWAP. Narrow-range sessions like this favor sellers — theta burn accelerated as the underlying pinned near the ${strike} strike.`
     );
   }
 
-  // 3. Optimal exit analysis
+  // 2. Options flow & GEX context
+  const nearATM = Math.abs(underlyingStart - strike) / underlyingStart < 0.015;
+  if (nearATM) {
+    insights.push(
+      `The ${strikeLabel} sat at the GEX (gamma exposure) pivot near the money. Dealer hedging flows likely amplified moves around the ${strike} strike — ${isCall ? "call wall" : "put wall"} positioning created ${exitPLPct > 0 ? "a magnet effect pulling price toward your strike" : "gamma headwinds as market makers hedged against the position"}.`
+    );
+  } else {
+    const otmPct = Math.abs(strike - underlyingStart) / underlyingStart * 100;
+    insights.push(
+      `Entry on the ${strikeLabel} (${otmPct.toFixed(0)}% OTM) meant elevated delta sensitivity — the position needed ${isCall ? "a strong push above" : "a breakdown below"} the ${strike} strike to gain intrinsic value. ${exitPLPct > 0 ? "The move delivered, with gamma accelerating P/L as it moved ITM." : "Without a decisive move through the strike, theta decay dominated the premium."}`
+    );
+  }
+
+  // 3. Vol / premium dynamics
+  if (isWide && moveAbs > 1.0) {
+    insights.push(
+      `Realized vol expanded sharply with a ${rangeWidth.toFixed(1)}% range — IV likely caught a bid, lifting extrinsic value. ${exitPLPct > 0 ? "Vega worked in your favor alongside delta, compounding the gain." : "Despite the vol expansion, the directional move worked against the position — being right on vol but wrong on direction."}`
+    );
+  } else if (!isWide) {
+    insights.push(
+      `Low realized vol (${rangeWidth.toFixed(1)}% range) led to IV compression and accelerated theta burn on the ${strikeLabel}. The premium decayed from $${entryPremium.toFixed(2)} as time value evaporated — ${exitPLPct < -10 ? "a reminder that buying options in a low-vol regime fights the clock." : "though the position held up despite the unfavorable vol environment."}`
+    );
+  } else {
+    insights.push(
+      `The session saw decent range (${rangeWidth.toFixed(1)}%) but lacked follow-through — a STRAT 2-1-2 reversal pattern likely formed as price explored both extremes before settling. IV stayed elevated but the back-and-forth whipsawed premium.`
+    );
+  }
+
+  // 4. MFE/MAE trade management
   if (maxProfitPct > 30 && maxProfitPct > exitPLPct + 20) {
     insights.push(
-      `Peak profit of +${maxProfitPct.toFixed(0)}% (+$${maxProfit}) was reached at ${maxProfitTime}. A take-profit at 50% or trailing stop would have captured significantly more than the ${exitPLPct >= 0 ? "+" : ""}${exitPLPct.toFixed(0)}% closing result.`
+      `MFE of +${maxProfitPct.toFixed(0)}% (+$${maxProfit}) at ${maxProfitTime} was left on the table — the close captured only ${exitPLPct >= 0 ? "+" : ""}${exitPLPct.toFixed(0)}%. A trailing stop at the 21 EMA or a 50% take-profit rule would have locked in significantly more. The retracement from peak suggests resistance rejection or a vol-crush candle.`
+    );
+  } else if (maxDrawdownPct < -25) {
+    insights.push(
+      `MAE hit ${maxDrawdownPct.toFixed(0)}% ($${maxDrawdown}) — a hard stop at -20% would have cut the loss. ${exitPLPct > 0 ? "The position recovered, but the drawdown signals poor entry timing — waiting for VWAP confirmation or a STRAT trigger bar would have avoided the dip." : "The continued bleed confirms the entry was against the prevailing order flow."}`
     );
   } else if (maxProfitPct > 10) {
     insights.push(
-      `The contract peaked at +${maxProfitPct.toFixed(0)}% at ${maxProfitTime}. ${maxProfitPct - exitPLPct < 10 ? "Holding through close captured most of the move." : "An earlier exit would have improved returns."}`
+      `The ${strikeLabel} peaked at +${maxProfitPct.toFixed(0)}% at ${maxProfitTime}. ${Math.abs(maxProfitPct - exitPLPct) < 10 ? "Holding through close was the right call — the position stayed near its highs with no significant mean reversion." : "Scaling out at the first resistance test or when delta started flattening would have been the higher-EV play."}`
     );
   }
 
-  // 4. Drawdown warning
-  if (maxDrawdownPct < -25) {
-    insights.push(
-      `Maximum drawdown hit ${maxDrawdownPct.toFixed(0)}% ($${maxDrawdown}) — a stop-loss at -20% would have limited damage. ${exitPLPct > 0 ? "The position recovered, but the ride was rough." : "The loss worsened from there, reinforcing the importance of risk management."}`
-    );
-  }
-
-  // 5. Strategy takeaway
+  // 5. Directional thesis verdict
   if (isCall && underlyingMove > 0 && exitPLPct > 0) {
     insights.push(
-      `Directional bias was correct — entering a call when the underlying was trending ${direction} validated the thesis. Key learning: timing the entry near ${entryTime} captured the move well.`
+      `Bullish thesis confirmed — the ${entryTime} entry caught the ${dirWord} early. The call's delta expanded as ${ticker} broke above the opening range, and the position rode the trend into the close. Key level to watch next session: $${underlyingHigh.toFixed(2)} as potential new support.`
     );
   } else if (!isCall && underlyingMove < 0 && exitPLPct > 0) {
     insights.push(
-      `The bearish put thesis played out as expected with the underlying declining. Entry timing at ${entryTime} allowed the position to benefit from the sell-off.`
+      `Bearish thesis played out — puts gained as ${ticker} broke below VWAP support and sellers accelerated into the close. The put wall below ${strike} likely attracted additional hedging flow, amplifying the move. Watch $${underlyingLow.toFixed(2)} as the next support test.`
     );
-  } else if (rangeWidth > 1.5) {
+  } else if (exitPLPct < -10) {
     insights.push(
-      `High intraday volatility (${rangeWidth.toFixed(1)}% range) created opportunities on both sides. In choppy sessions like this, shorter holding periods and tighter stops tend to outperform.`
+      `The ${isCall ? "bullish" : "bearish"} thesis was invalidated — ${ticker} moved ${underlyingMove > 0 ? "higher" : "lower"}, against the ${isCall ? "call" : "put"} position. In hindsight, the entry at ${entryTime} was ${nearATM ? "fighting the prevailing order flow" : "too far OTM to overcome theta decay in a single session"}. A straddle or reversal at the first sign of failure would have been the adaptation.`
     );
   } else {
     insights.push(
-      `Low volatility (${rangeWidth.toFixed(1)}% range) compressed option premiums through theta decay. In compressed-range sessions, selling premium tends to outperform buying.`
+      `Neutral outcome on the ${strikeLabel} — the session lacked a clean directional trigger. In hindsight, waiting for a confirmed VWAP reclaim/rejection or a STRAT 2-2 continuation bar before entering would have improved the risk/reward profile.`
     );
   }
 
