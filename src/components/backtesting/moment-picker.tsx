@@ -115,8 +115,8 @@ export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
             >
               <option value="">Choose time...</option>
               {timeSlots.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+                <option key={t.value} value={t.value}>
+                  {t.label}
                 </option>
               ))}
             </select>

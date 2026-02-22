@@ -56,7 +56,7 @@ export function SummaryCards({ metrics }: SummaryCardsProps) {
       value: `${formatPL(metrics.optimalExitPL)} (${formatPct(metrics.optimalExitPLPct)})`,
       sub: metrics.optimalExitTime,
       icon: Target,
-      color: "text-accent",
+      color: metrics.optimalExitPL >= 0 ? "text-success" : "text-danger",
     },
   ];
 

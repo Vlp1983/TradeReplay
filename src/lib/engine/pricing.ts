@@ -210,6 +210,13 @@ export function generateUnderlyingPath(
       const minute = ((b + 2) % 4) * 15;
       const timeStr = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 
+      // 12-hour display label
+      let h12 = hour;
+      const suffix = h12 >= 12 ? "PM" : "AM";
+      if (h12 === 0) h12 = 12;
+      else if (h12 > 12) h12 -= 12;
+      const timeLabel = `${h12}:${minute.toString().padStart(2, "0")} ${suffix}`;
+
       if (day === 0 && b === startBucket) {
         // Entry point — use base price
       } else {
@@ -223,7 +230,7 @@ export function generateUnderlyingPath(
       const dayLabel = day === 0 ? "Today" : `Day +${day}`;
 
       times.push(timeStr);
-      labels.push(day === 0 ? timeStr : `${dayLabel} ${timeStr}`);
+      labels.push(day === 0 ? timeLabel : `${dayLabel} ${timeLabel}`);
       prices.push(+S.toFixed(2));
       dayIndices.push(day);
     }

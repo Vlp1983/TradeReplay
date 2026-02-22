@@ -109,10 +109,7 @@ export function ReplayChart({
     };
   }, [points, dataKey]);
 
-  const isPositive =
-    (points[points.length - 1]?.[dataKey] ?? 0) >= (points[0]?.[dataKey] ?? 0);
-  const lineColor =
-    view === "price" ? "#3B82F6" : isPositive ? "#22C55E" : "#EF4444";
+  const lineColor = "#3B82F6";
 
   // Entry premium value for reference line
   const entryValue = view === "pl" ? 0 : points[0]?.price ?? 0;

@@ -16,6 +16,7 @@ import type {
   ChainData,
   SelectedContract,
   ReplayResult,
+  Right,
 } from "@/lib/engine/types";
 import { generateChain } from "@/lib/engine/chain";
 import { replayContract } from "@/lib/engine/replay";
@@ -33,59 +34,72 @@ export default function BacktestingPage() {
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
 
-  const handleLoadChain = useCallback((selection: MomentSelection) => {
-    setMoment(selection);
-    setLoadingChain(true);
-    setReplayResult(null);
+  /** Replay an ATM contract for a given right (call or put) using current chain */
+  const replayAtm = useCallback(
+    (chain: ChainData, right: Right) => {
+      const rows = right === "call" ? chain.calls : chain.puts;
+      const atmRow = rows.find((r) => r.isATM);
+      if (!atmRow) return;
 
-    // Simulate async
-    setTimeout(() => {
-      const chain = generateChain(
-        selection.ticker,
-        selection.date,
-        selection.entryTime,
-        "0dte"
-      );
-      setChainData(chain);
-      setLoadingChain(false);
+      const atmContract: SelectedContract = {
+        ticker: chain.ticker,
+        date: chain.date,
+        entryTime: chain.entryTime,
+        expiration: chain.expiration,
+        strike: atmRow.strike,
+        right,
+        entryPremium: atmRow.premium,
+        confidence: atmRow.confidence,
+      };
 
-      // Auto-replay the ATM call contract
-      const atmRow = chain.calls.find((r) => r.isATM);
-      if (atmRow) {
-        const atmContract: SelectedContract = {
-          ticker: chain.ticker,
-          date: chain.date,
-          entryTime: chain.entryTime,
-          expiration: chain.expiration,
-          strike: atmRow.strike,
-          right: "call",
-          entryPremium: atmRow.premium,
-          confidence: atmRow.confidence,
-        };
+      setLoadingReplay(true);
+      setTimeout(() => {
+        const result = replayContract(atmContract);
+        setReplayResult(result);
+        setStep("replay");
+        setLoadingReplay(false);
 
-        setLoadingReplay(true);
         setTimeout(() => {
-          const result = replayContract(atmContract);
-          setReplayResult(result);
-          setStep("replay");
-          setLoadingReplay(false);
-
-          setTimeout(() => {
-            replayRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }, 100);
-        }, 300);
-      } else {
-        // Fallback: show chain if no ATM found
-        setStep("chain");
-        setTimeout(() => {
-          chainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          replayRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
         }, 100);
-      }
-    }, 300);
-  }, []);
+      }, 300);
+    },
+    []
+  );
+
+  const handleLoadChain = useCallback(
+    (selection: MomentSelection) => {
+      setMoment(selection);
+      setLoadingChain(true);
+      setReplayResult(null);
+
+      setTimeout(() => {
+        const chain = generateChain(
+          selection.ticker,
+          selection.date,
+          selection.entryTime,
+          "0dte"
+        );
+        setChainData(chain);
+        setLoadingChain(false);
+
+        // Auto-replay ATM call
+        replayAtm(chain, "call");
+      }, 300);
+    },
+    [replayAtm]
+  );
+
+  const handleToggleRight = useCallback(
+    (right: Right) => {
+      if (!chainData) return;
+      replayAtm(chainData, right);
+    },
+    [chainData, replayAtm]
+  );
 
   const handleExpirationChange = useCallback(
     (exp: Expiration) => {
@@ -212,6 +226,7 @@ export default function BacktestingPage() {
                     result={replayResult}
                     onNewBacktest={handleNewBacktest}
                     onPickAnother={handlePickAnother}
+                    onToggleRight={handleToggleRight}
                   />
                 </motion.div>
               )}

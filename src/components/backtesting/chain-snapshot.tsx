@@ -11,7 +11,7 @@ import type {
   Right,
   SelectedContract,
 } from "@/lib/engine/types";
-import { formatDateDisplay, getExpirationLabel } from "@/lib/engine/dates";
+import { formatDateDisplay, getExpirationLabel, to12Hour } from "@/lib/engine/dates";
 
 interface ChainSnapshotProps {
   chain: ChainData;
@@ -87,7 +87,7 @@ export function ChainSnapshot({
       </div>
       <p className="mb-4 text-[13px] text-text-muted">
         Select an OTM call or put to replay a different strike.
-        &mdash; {chain.ticker} {formatDateDisplay(chain.date)} {chain.entryTime}{" "}
+        &mdash; {chain.ticker} {formatDateDisplay(chain.date)} {to12Hour(chain.entryTime)}{" "}
         ET &mdash; ${chain.underlyingPrice.toFixed(2)}
       </p>
 
