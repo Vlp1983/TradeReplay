@@ -33,6 +33,7 @@ export default function BacktestingPage() {
   const [moment, setMoment] = useState<MomentSelection | null>(null);
   const [dataSource, setDataSource] = useState<"yahoo" | "synthetic">("synthetic");
   const [intradayBars, setIntradayBars] = useState<IntradayBar[]>([]);
+  const [selectedRight, setSelectedRight] = useState<Right>("call");
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
@@ -134,14 +135,15 @@ export default function BacktestingPage() {
       setIntradayBars(intradayResult.bars);
       setLoadingChain(false);
 
-      // Auto-replay ATM call with real intraday data
-      replayAtm(chainResult.chain, "call", intradayResult.bars);
+      // Auto-replay ATM contract with the selected direction
+      replayAtm(chainResult.chain, selectedRight, intradayResult.bars);
     },
-    [replayAtm]
+    [replayAtm, selectedRight]
   );
 
   const handleToggleRight = useCallback(
     (right: Right) => {
+      setSelectedRight(right);
       if (!chainData) return;
       replayAtm(chainData, right, intradayBars);
     },
@@ -233,8 +235,8 @@ export default function BacktestingPage() {
               )}
             </div>
             <p className="text-[15px] leading-relaxed text-text-secondary">
-              Select an instrument, pick a contract, and see how much profit
-              you would have made. Supports options, futures, and crypto.
+              Choose calls or puts, pick a contract, and see how much profit
+              you would have made.
             </p>
           </div>
 
@@ -244,6 +246,8 @@ export default function BacktestingPage() {
             <MomentPicker
               onLoadChain={handleLoadChain}
               loading={loadingChain}
+              selectedRight={selectedRight}
+              onRightChange={handleToggleRight}
             />
 
             {/* Step 2 — chain snapshot (only when user picks another contract) */}

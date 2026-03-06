@@ -3,8 +3,6 @@ import { Separator } from "@/components/ui/separator";
 
 const productLinks = [
   { label: "AI Backtesting", href: "/backtesting" },
-  { label: "Guru Score Board", href: "/scoreboard" },
-  { label: "Guru Report Cards", href: "/scoreboard" },
 ];
 
 const legalLinks = [

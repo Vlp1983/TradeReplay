@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { ChevronDown, TrendingUp, Calendar, Clock } from "lucide-react";
+import { ChevronDown, TrendingUp, Calendar, Clock, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Ticker, AssetClass, MomentSelection } from "@/lib/engine/types";
+import type { Ticker, MomentSelection, Right } from "@/lib/engine/types";
 import {
   ASSET_CLASS_TICKERS,
-  ASSET_CLASS_LABELS,
   TICKER_LABELS,
 } from "@/lib/engine/types";
 import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay } from "@/lib/engine/dates";
@@ -14,29 +13,27 @@ import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay } from "@/li
 interface MomentPickerProps {
   onLoadChain: (selection: MomentSelection) => void;
   loading?: boolean;
+  selectedRight: Right;
+  onRightChange: (right: Right) => void;
 }
 
-export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
-  const [assetClass, setAssetClass] = useState<AssetClass>("options");
+export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChange }: MomentPickerProps) {
   const [ticker, setTicker] = useState<Ticker | "">("");
   const [date, setDate] = useState("");
   const [entryTime, setEntryTime] = useState("");
 
-  const tickers = ASSET_CLASS_TICKERS[assetClass];
+  const tickers = ASSET_CLASS_TICKERS.options;
   const tradingDays = useMemo(() => getRecentTradingDays(14), []);
   const timeSlots = useMemo(() => getEntryTimeSlots(), []);
 
   const canSubmit = ticker && date && entryTime && !loading;
 
-  function handleAssetClassChange(ac: AssetClass) {
-    setAssetClass(ac);
-    setTicker(""); // reset ticker when switching asset class
-  }
-
   function handleSubmit() {
     if (!canSubmit) return;
     onLoadChain({ ticker: ticker as Ticker, date, entryTime });
   }
+
+  const isCall = selectedRight === "call";
 
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
@@ -49,24 +46,40 @@ export function MomentPicker({ onLoadChain, loading }: MomentPickerProps) {
         </h2>
       </div>
       <p className="mb-5 text-[13px] text-text-muted">
-        Choose what you were trading, the day, and when you would have entered.
+        Choose your direction, ticker, date, and entry time.
       </p>
 
-      {/* Asset class toggle */}
-      <div className="mb-4 flex rounded-lg border border-border p-0.5 w-fit">
-        {(Object.keys(ASSET_CLASS_LABELS) as AssetClass[]).map((ac) => (
+      {/* Call / Put main selection */}
+      <div className="mb-5">
+        <label className="mb-2 block text-[13px] font-medium text-text-secondary">
+          Direction
+        </label>
+        <div className="flex rounded-lg border border-border p-0.5 w-fit">
           <button
-            key={ac}
-            onClick={() => handleAssetClassChange(ac)}
-            className={`rounded-md px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
-              assetClass === ac
-                ? "bg-accent text-white"
-                : "text-text-secondary hover:text-text-primary"
+            onClick={() => onRightChange("call")}
+            className={`flex items-center gap-1.5 rounded-md px-4 py-2 text-[13px] font-semibold transition-colors ${
+              isCall
+                ? "bg-green-500/15 text-green-400"
+                : "text-text-muted hover:text-text-primary"
             }`}
           >
-            {ASSET_CLASS_LABELS[ac]}
+            <ArrowUpRight className="h-4 w-4" />
+            Call
+            {isCall && <span className="text-[11px] font-normal opacity-70">Bullish</span>}
           </button>
-        ))}
+          <button
+            onClick={() => onRightChange("put")}
+            className={`flex items-center gap-1.5 rounded-md px-4 py-2 text-[13px] font-semibold transition-colors ${
+              !isCall
+                ? "bg-red-500/15 text-red-400"
+                : "text-text-muted hover:text-text-primary"
+            }`}
+          >
+            <ArrowDownRight className="h-4 w-4" />
+            Put
+            {!isCall && <span className="text-[11px] font-normal opacity-70">Bearish</span>}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">

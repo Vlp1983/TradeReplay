@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TradeReplay — Options, Crypto & Futures Replay Platform",
+  title: "TradeReplay — Options Replay Platform",
   description:
-    "Backtest options contracts from any past moment and evaluate signal performance with the Guru Score Board and Guru Report Cards.",
+    "Backtest options contracts from any past moment. Pick calls or puts, replay the contract, and see exactly what would have happened.",
 };
 
 export default function RootLayout({

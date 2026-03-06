@@ -8,8 +8,6 @@ import { cn } from "@/lib/utils";
 
 const navLinks = [
   { label: "AI Backtesting", href: "/backtesting" },
-  { label: "Grade My Trade", href: "/grade-my-trade" },
-  { label: "Guru Score Board", href: "/scoreboard" },
   { label: "Pricing", href: "/pricing" },
   { label: "FAQ", href: "/faq" },
 ];

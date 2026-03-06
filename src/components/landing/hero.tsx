@@ -17,27 +17,23 @@ export function Hero() {
           transition={{ duration: 0.5, ease: "easeOut" }}
         >
           <Badge variant="outline" className="mb-6 text-[13px] font-normal">
-            Options &bull; Crypto &bull; Futures
+            Options Backtesting
           </Badge>
 
           <h1 className="text-[38px] font-bold leading-tight text-text-primary md:text-[56px]">
             Replay any trade.
             <br />
-            Rank any guru.
+            See the result.
           </h1>
 
           <p className="mt-5 max-w-lg text-base leading-relaxed text-text-secondary md:text-lg">
-            AI-powered backtesting for options, crypto, and futures. Pick a
-            moment, replay the contract, and see exactly what would have
-            happened. Then compare signal providers on real results.
+            AI-powered backtesting for options. Pick a moment, choose calls or
+            puts, replay the contract, and see exactly what would have happened.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Button size="lg" asChild>
               <Link href="/backtesting">Start Backtesting</Link>
-            </Button>
-            <Button variant="outline" size="lg" asChild>
-              <Link href="/scoreboard">View Guru Score Board</Link>
             </Button>
           </div>
 
