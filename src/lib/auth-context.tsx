@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [profileResult, subscriptionResult, usageResult] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
       supabase.from('subscriptions').select('*').eq('user_id', userId).eq('status', 'active').maybeSingle(),
-      supabase.from('usage_tracking').select('backtest_count').eq('user_id', userId).maybeSingle(),
+      supabase.from('usage_tracking').select('*').eq('user_id', userId).maybeSingle(),
     ])
 
     if (profileResult.data) setProfile(profileResult.data)
@@ -94,7 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: existing } = await supabase
       .from('usage_tracking')
-      .select('id, backtest_count')
+      .select('*')
       .eq('user_id', user.id)
       .maybeSingle()
 

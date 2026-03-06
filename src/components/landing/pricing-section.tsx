@@ -22,7 +22,7 @@ const tiers: PricingTier[] = [
     name: "Free",
     price: "$0",
     features: [
-      "Limited backtests",
+      "3 backtests per session",
       "Basic chain snapshots",
       "Key moments summaries",
     ],
@@ -30,8 +30,8 @@ const tiers: PricingTier[] = [
     ctaVariant: "outline",
   },
   {
-    name: "Pro",
-    price: "$XX",
+    name: "Pro Monthly",
+    price: "$15.99",
     period: "/mo",
     badge: "Most Popular",
     features: [
@@ -43,15 +43,16 @@ const tiers: PricingTier[] = [
     ctaVariant: "default",
   },
   {
-    name: "Elite",
-    price: "$XXX",
-    period: "/mo",
+    name: "Pro Annual",
+    price: "$129.99",
+    period: "/yr",
+    badge: "Save 32%",
     features: [
-      "Everything in Pro",
-      "Highest fidelity data (future)",
-      "Priority access (future)",
+      "Everything in Pro Monthly",
+      "$10.83/mo — best value",
+      "Priority support",
     ],
-    ctaLabel: "Upgrade to Elite",
+    ctaLabel: "Upgrade to Pro",
     ctaVariant: "outline",
   },
 ];
@@ -68,7 +69,7 @@ export function PricingSection() {
         </p>
       </div>
 
-      <div className="mt-12 grid gap-6 md:grid-cols-3">
+      <div className="mt-12 grid gap-6 md:grid-cols-3 max-w-4xl mx-auto">
         {tiers.map((tier) => (
           <Card
             key={tier.name}

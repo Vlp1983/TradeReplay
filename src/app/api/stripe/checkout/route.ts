@@ -2,9 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import Stripe from 'stripe'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-12-18.acacia',
-})
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
 
 export async function POST(request: Request) {
   try {
@@ -23,7 +21,7 @@ export async function POST(request: Request) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('stripe_customer_id, email, full_name')
+      .select('*')
       .eq('id', user.id)
       .single()
 

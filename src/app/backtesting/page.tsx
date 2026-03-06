@@ -8,8 +8,6 @@ import { Button } from "@/components/ui/button";
 import { MomentPicker } from "@/components/backtesting/moment-picker";
 import { ChainSnapshot } from "@/components/backtesting/chain-snapshot";
 import { ContractReplay } from "@/components/backtesting/contract-replay";
-import { Navbar } from "@/components/landing/navbar";
-
 import type {
   MomentSelection,
   Expiration,
@@ -208,7 +206,6 @@ export default function BacktestingPage() {
 
   return (
     <>
-      <Navbar />
       <main className="min-h-screen px-4 pb-16 pt-[96px] md:px-6">
         <div className="mx-auto max-w-content">
           {/* Page header */}

@@ -1,6 +1,5 @@
 "use client";
 
-import { Navbar } from "@/components/landing/navbar";
 import { Hero } from "@/components/landing/hero";
 import { WhySection } from "@/components/landing/why-section";
 import { FeatureSection } from "@/components/landing/feature-section";
@@ -12,8 +11,6 @@ import { Footer } from "@/components/landing/footer";
 export default function LandingPage() {
   return (
     <>
-      <Navbar />
-
       <main>
         {/* Section A — Hero */}
         <Hero />

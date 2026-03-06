@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth-context";
+import { Navbar } from "@/components/Navbar";
+import { GuestNudgeBanner } from "@/components/GuestNudgeBanner";
 
 export const metadata: Metadata = {
   title: "TradeReplay — Options Replay Platform",
@@ -14,7 +17,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="scroll-smooth">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          <Navbar />
+          <GuestNudgeBanner />
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }

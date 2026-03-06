@@ -36,6 +36,7 @@ export interface Database {
           stripe_customer_id?: string | null
           updated_at?: string
         }
+        Relationships: []
       }
       subscriptions: {
         Row: {
@@ -74,6 +75,15 @@ export interface Database {
           canceled_at?: string | null
           updated_at?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: 'subscriptions_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
       }
       usage_tracking: {
         Row: {
@@ -107,6 +117,15 @@ export interface Database {
           last_backtest_at?: string | null
           updated_at?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: 'usage_tracking_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
       }
     }
     Views: {
