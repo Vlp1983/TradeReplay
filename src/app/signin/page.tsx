@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AuthModal } from "@/components/auth/AuthModal";
 
-export default function SignInPage() {
+function SignInContent() {
   const [showModal, setShowModal] = useState(false);
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect") ?? undefined;
@@ -27,5 +27,13 @@ export default function SignInPage() {
         redirectTo={redirect}
       />
     </main>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0B1220]" />}>
+      <SignInContent />
+    </Suspense>
   );
 }
