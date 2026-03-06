@@ -120,3 +120,8 @@ export interface Database {
     }
   }
 }
+
+// Convenience type aliases
+export type Profile = Database['public']['Tables']['profiles']['Row']
+export type Subscription = Database['public']['Tables']['subscriptions']['Row']
+export type UsageTracking = Database['public']['Tables']['usage_tracking']['Row']
