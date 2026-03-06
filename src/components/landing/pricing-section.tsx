@@ -23,8 +23,8 @@ const tiers: PricingTier[] = [
     price: "$0",
     features: [
       "Limited backtests",
-      "Basic Guru Score Board view",
-      "Limited library",
+      "Basic chain snapshots",
+      "Key moments summaries",
     ],
     ctaLabel: "Start Free",
     ctaVariant: "outline",
@@ -37,7 +37,7 @@ const tiers: PricingTier[] = [
     features: [
       "Unlimited backtesting",
       "Full Key Moments explanations",
-      "Full Guru Report Cards",
+      "AI-powered insights",
     ],
     ctaLabel: "Upgrade to Pro",
     ctaVariant: "default",

@@ -18,8 +18,8 @@ const faqs = [
     a: "No. TradeReplay does not connect to your brokerage or require any account linking. All analysis is based on historical market data.",
   },
   {
-    q: "What markets are supported?",
-    a: "Options, Crypto, and Futures. Stocks are intentionally excluded to maintain specialization in complex derivatives markets.",
+    q: "What tickers are supported?",
+    a: "We currently support popular equity options: SPY, QQQ, AAPL, TSLA, NVDA, and AMZN. More tickers and asset classes are coming soon.",
   },
   {
     q: "How accurate are estimates?",
@@ -27,11 +27,11 @@ const faqs = [
   },
   {
     q: "How does the delayed paywall work?",
-    a: "You can use the platform before hitting any paywall. After meaningful usage (e.g., 5 backtests or 3 report cards opened in 14 days), a non-intrusive upgrade prompt appears. Free users retain access to limited backtests and basic features.",
+    a: "You can use the platform before hitting any paywall. After meaningful usage (e.g., 5 backtests in 14 days), a non-intrusive upgrade prompt appears. Free users retain access to limited backtests and basic features.",
   },
   {
-    q: "How are Guru scores calculated?",
-    a: "Guru scores are based on accuracy, expectancy, risk discipline, consistency, and clarity. The methodology is transparent and documented. Rankings can be filtered by category and time window.",
+    q: "What is the Call/Put selector?",
+    a: "Before loading the chain, you choose your directional thesis — Call (bullish) or Put (bearish). This filters the chain snapshot and auto-replays the at-the-money contract in your chosen direction.",
   },
 ];
 
