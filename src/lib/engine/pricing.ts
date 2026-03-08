@@ -1,12 +1,9 @@
 /**
- * Synthetic option pricing engine.
+ * Option pricing engine.
  *
- * Dual-path estimation:
- *   Path A — Simplified Black-Scholes (volatility-based)
- *   Path B — Delta/momentum approximation
- * Consensus: average of both with confidence from agreement.
- *
- * All data is synthetic and labeled "Estimated (MVP)".
+ * Uses standard Black-Scholes for all premium calculations.
+ * normalCDF uses the Abramowitz & Stegun erfc-based approximation
+ * (more numerically stable than the raw Horner form).
  */
 
 import type { Confidence } from "./types";
@@ -21,11 +18,11 @@ function normalCDF(x: number): number {
   const a5 = 1.061405429;
   const p = 0.3275911;
   const sign = x < 0 ? -1 : 1;
-  const absX = Math.abs(x);
-  const t = 1 / (1 + p * absX);
+  const z = Math.abs(x) / Math.sqrt(2);
+  const t = 1.0 / (1.0 + p * z);
   const y =
-    1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX / 2);
-  return 0.5 * (1 + sign * y);
+    1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+  return 0.5 * (1.0 + sign * y);
 }
 
 // ---------- seeded PRNG (deterministic per moment) ----------
@@ -76,18 +73,31 @@ const BASE_PRICES: Record<string, number> = {
   XRP: 2.40,
 };
 
-/** Base implied volatility by ticker (annualized). */
+/**
+ * Base implied volatility by ticker (annualized).
+ *
+ * IV tiers:
+ *  - Major ETFs (SPY, QQQ): ~16% baseline
+ *  - Large cap stocks (AAPL, AMZN): ~28%
+ *  - High-vol stocks (TSLA, NVDA): ~45%
+ *  - Futures: matched to underlying equity IV
+ *  - Crypto: elevated (60-100%)
+ *
+ * TODO: Scale up IV by 1.5x if within 3 days of earnings
+ */
 export const BASE_VOLATILITY: Record<string, number> = {
-  // Options
-  SPY: 0.18,
-  QQQ: 0.22,
+  // Major ETFs — ~16% baseline
+  SPY: 0.16,
+  QQQ: 0.18,
+  // Large cap stocks — ~28%
   AAPL: 0.28,
-  TSLA: 0.55,
-  NVDA: 0.50,
-  AMZN: 0.32,
-  // Futures
-  ES: 0.18,
-  NQ: 0.22,
+  AMZN: 0.28,
+  // High-vol / meme-adjacent stocks — ~45%
+  TSLA: 0.45,
+  NVDA: 0.45,
+  // Futures — matched to equity counterpart
+  ES: 0.16,
+  NQ: 0.18,
   CL: 0.35,
   GC: 0.15,
   SI: 0.28,
@@ -123,37 +133,17 @@ export function getUnderlyingPrice(
   );
 }
 
-// ---------- Black-Scholes Path A ----------
-
-function blackScholesCall(
-  S: number,
-  K: number,
-  T: number,
-  r: number,
-  sigma: number
-): number {
-  if (T <= 0) return Math.max(S - K, 0);
-  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
-  return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
-}
-
-function blackScholesPut(
-  S: number,
-  K: number,
-  T: number,
-  r: number,
-  sigma: number
-): number {
-  if (T <= 0) return Math.max(K - S, 0);
-  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
-  return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
-}
+// ---------- Black-Scholes pricing ----------
 
 /**
- * Pure Black-Scholes price for a call or put.
- * Used by the replay engine for premium reconstruction from underlying bars.
+ * Standard Black-Scholes price for a European call or put.
+ *
+ * @param S     - Underlying spot price
+ * @param K     - Strike price
+ * @param T     - Time to expiry in years (trading time)
+ * @param isCall - true for call, false for put
+ * @param sigma - Implied volatility (annualized, e.g. 0.16 = 16%)
+ * @param r     - Risk-free rate (default 5%)
  */
 export function blackScholesPrice(
   S: number,
@@ -163,60 +153,69 @@ export function blackScholesPrice(
   sigma: number,
   r: number = 0.05
 ): number {
-  return isCall
-    ? blackScholesCall(S, K, T, r, sigma)
-    : blackScholesPut(S, K, T, r, sigma);
+  if (T <= 0) {
+    return isCall ? Math.max(0, S - K) : Math.max(0, K - S);
+  }
+  if (sigma <= 0) return 0;
+
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  const d2 = d1 - sigma * Math.sqrt(T);
+
+  if (isCall) {
+    return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+  } else {
+    return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
+  }
 }
 
-// ---------- Path B: delta-momentum approximation ----------
-
-function deltaMomentumPrice(
+/**
+ * Black-Scholes delta.
+ * Returns positive for calls (0 to 1), negative for puts (-1 to 0).
+ */
+export function blackScholesDelta(
   S: number,
   K: number,
   T: number,
-  isCall: boolean
+  isCall: boolean,
+  sigma: number,
+  r: number = 0.05
 ): number {
-  const intrinsic = isCall ? Math.max(S - K, 0) : Math.max(K - S, 0);
-  const moneyness = isCall ? (S - K) / S : (K - S) / S;
-  // Approximate time value
-  const timeValue = Math.max(0, S * 0.04 * Math.sqrt(Math.max(T, 0.001)) * Math.exp(-Math.abs(moneyness) * 8));
-  return intrinsic + timeValue;
+  if (T <= 0) return isCall ? (S > K ? 1 : 0) : (S < K ? -1 : 0);
+  if (sigma <= 0) return 0;
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  return isCall ? normalCDF(d1) : normalCDF(d1) - 1;
 }
 
-// ---------- consensus pricing ----------
+// ---------- consensus pricing (uses pure BS) ----------
 
 export interface PriceEstimate {
   premium: number;
   confidence: Confidence;
-  pathA: number;
-  pathB: number;
 }
 
+/**
+ * Estimate option premium using pure Black-Scholes.
+ * Used by the synthetic chain generator.
+ */
 export function estimatePremium(
   S: number,
   K: number,
-  T: number, // in years
+  T: number,
   isCall: boolean,
   sigma: number = 0.25,
   r: number = 0.05
 ): PriceEstimate {
-  const pathA = isCall
-    ? blackScholesCall(S, K, T, r, sigma)
-    : blackScholesPut(S, K, T, r, sigma);
-  const pathB = deltaMomentumPrice(S, K, T, isCall);
+  const premium = blackScholesPrice(S, K, T, isCall, sigma, r);
 
-  const premium = (pathA + pathB) / 2;
-  const agreement = pathA > 0.01 ? Math.abs(pathA - pathB) / pathA : 0;
-
+  // Confidence based on moneyness — ATM is most reliable
+  const moneyness = Math.abs(S - K) / S;
   let confidence: Confidence = "High";
-  if (agreement > 0.4) confidence = "Low";
-  else if (agreement > 0.15) confidence = "Med";
+  if (moneyness > 0.10) confidence = "Low";
+  else if (moneyness > 0.04) confidence = "Med";
 
   return {
     premium: +Math.max(premium, 0.01).toFixed(2),
     confidence,
-    pathA: +Math.max(pathA, 0.01).toFixed(2),
-    pathB: +Math.max(pathB, 0.01).toFixed(2),
   };
 }
 
@@ -234,6 +233,10 @@ export function getImpliedVol(
 
 // ---------- delta calculation ----------
 
+/**
+ * Compute option delta. Delegates to blackScholesDelta.
+ * Returns positive for calls (0 to 1), negative for puts (-1 to 0).
+ */
 export function computeDelta(
   S: number,
   K: number,
@@ -242,9 +245,7 @@ export function computeDelta(
   sigma: number = 0.25,
   r: number = 0.05
 ): number {
-  if (T <= 0) return isCall ? (S > K ? 1 : 0) : (S < K ? -1 : 0);
-  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T));
-  return isCall ? normalCDF(d1) : normalCDF(d1) - 1;
+  return blackScholesDelta(S, K, T, isCall, sigma, r);
 }
 
 // ---------- dual price formatting ----------

@@ -63,25 +63,26 @@ export function replayContract(
     );
     const bars = filtered.length >= 3 ? filtered : intradayBars;
 
-    // Compute expiration timestamp (market close on expiration day)
-    const expirationDate = getExpirationDateStr(date, expirationDays);
-    const expirationMs = new Date(expirationDate + "T21:00:00Z").getTime(); // 4PM ET = 21:00 UTC
-
     // Use entry bar IV, held constant throughout
     const entryUnderlying = bars[0].close;
     entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
 
-    // Compute entry time-to-expiry for delta
-    const entryT = Math.max((expirationMs - bars[0].timestamp) / (365.25 * 24 * 3600 * 1000), 0.0001);
+    // Compute T in trading time for each bar:
+    // T = (trading minutes remaining until expiration close) / (252 * 390)
+    // For same-day (0DTE): trading minutes = minutes until 16:00 from bar time
+    // For multi-day: add expirationDays * 390 trading minutes
+    const entryBarMinutes = parseTimeMinutes(bars[0].time);
+    const entryTradingMinLeft = Math.max(960 - entryBarMinutes, 1) + expirationDays * 390;
+    const entryT = Math.max(entryTradingMinLeft / (252 * 390), 0.0001);
     entryDelta = computeDelta(entryUnderlying, strike, entryT, isCall, entryIV, r);
 
     allPoints = [];
     for (let i = 0; i < bars.length; i++) {
       const S = bars[i].close;
-      const T = Math.max(
-        (expirationMs - bars[i].timestamp) / (365.25 * 24 * 3600 * 1000),
-        0.0001
-      );
+      // Trading minutes remaining from this bar to expiration close
+      const barMinutes = parseTimeMinutes(bars[i].time);
+      const tradingMinLeft = Math.max(960 - barMinutes, 1) + expirationDays * 390;
+      const T = Math.max(tradingMinLeft / (252 * 390), 0.0001);
 
       let premium = blackScholesPrice(S, strike, T, isCall, entryIV, r);
 
@@ -178,13 +179,6 @@ export function replayContract(
     metrics,
     keyMoments,
   };
-}
-
-/** Compute the expiration date string given entry date and days to expiry. */
-function getExpirationDateStr(entryDate: string, expirationDays: number): string {
-  const d = new Date(entryDate + "T12:00:00Z");
-  d.setDate(d.getDate() + expirationDays);
-  return d.toISOString().slice(0, 10);
 }
 
 // ─── Improved synthetic path ─────────────────────────────────────────
