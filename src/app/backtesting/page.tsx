@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { MomentPicker } from "@/components/backtesting/moment-picker";
 import { ChainSnapshot } from "@/components/backtesting/chain-snapshot";
 import { ContractReplay } from "@/components/backtesting/contract-replay";
+import { PaywallBlur, PaywallModal } from "@/components/auth/PaywallModal";
+import { useGate } from "@/lib/use-gate";
 import type {
   MomentSelection,
   Expiration,
@@ -32,6 +34,9 @@ export default function BacktestingPage() {
   const [dataSource, setDataSource] = useState<"yahoo" | "synthetic">("synthetic");
   const [intradayBars, setIntradayBars] = useState<IntradayBar[]>([]);
   const [selectedRight, setSelectedRight] = useState<Right>("call");
+  const [showPaywall, setShowPaywall] = useState(false);
+
+  const { checkAndIncrement, isLimitReached, limitReason } = useGate();
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
@@ -118,6 +123,11 @@ export default function BacktestingPage() {
 
   const handleLoadChain = useCallback(
     async (selection: MomentSelection) => {
+      if (!checkAndIncrement()) {
+        setShowPaywall(true);
+        return;
+      }
+
       setMoment(selection);
       setLoadingChain(true);
       setReplayResult(null);
@@ -136,7 +146,7 @@ export default function BacktestingPage() {
       // Auto-replay ATM contract with the selected direction
       replayAtm(chainResult.chain, selectedRight, intradayResult.bars);
     },
-    [replayAtm, selectedRight]
+    [replayAtm, selectedRight, checkAndIncrement]
   );
 
   const handleToggleRight = useCallback(
@@ -248,48 +258,56 @@ export default function BacktestingPage() {
             />
 
             {/* Step 2 — chain snapshot (only when user picks another contract) */}
-            <AnimatePresence>
-              {chainData && step === "chain" && (
-                <motion.div
-                  ref={chainRef}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <ChainSnapshot
-                    chain={chainData}
-                    onExpirationChange={handleExpirationChange}
-                    onReplayContract={handleReplayContract}
-                    onBackToReplay={replayResult ? handleBackToReplay : undefined}
-                    loading={loadingReplay}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <PaywallBlur isBlurred={isLimitReached} onUnlock={() => setShowPaywall(true)}>
+              <AnimatePresence>
+                {chainData && step === "chain" && (
+                  <motion.div
+                    ref={chainRef}
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <ChainSnapshot
+                      chain={chainData}
+                      onExpirationChange={handleExpirationChange}
+                      onReplayContract={handleReplayContract}
+                      onBackToReplay={replayResult ? handleBackToReplay : undefined}
+                      loading={loadingReplay}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-            {/* Step 3 — contract replay */}
-            <AnimatePresence>
-              {replayResult && step === "replay" && (
-                <motion.div
-                  ref={replayRef}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <ContractReplay
-                    result={replayResult}
-                    onNewBacktest={handleNewBacktest}
-                    onPickAnother={handlePickAnother}
-                    onToggleRight={handleToggleRight}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
+              {/* Step 3 — contract replay */}
+              <AnimatePresence>
+                {replayResult && step === "replay" && (
+                  <motion.div
+                    ref={replayRef}
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <ContractReplay
+                      result={replayResult}
+                      onNewBacktest={handleNewBacktest}
+                      onPickAnother={handlePickAnother}
+                      onToggleRight={handleToggleRight}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </PaywallBlur>
           </div>
         </div>
       </main>
+
+      <PaywallModal
+        isOpen={showPaywall}
+        onClose={() => setShowPaywall(false)}
+        reason={limitReason ?? "backtests"}
+      />
     </>
   );
 }
