@@ -68,29 +68,35 @@ export function useGate(): UseGateResult {
   const minutesElapsed = (now - sessionStartAt) / 60_000
   const minutesRemaining = Math.max(0, FREE_SESSION_MINUTES - minutesElapsed)
 
-  const backTestLimitReached = !isProUser && backtestCount >= FREE_BACKTEST_LIMIT
-  const timeLimitReached = !user && !isProUser && minutesElapsed >= FREE_SESSION_MINUTES
-  const isLimitReached = backTestLimitReached || timeLimitReached
-  const canRunBacktest = !isLimitReached
+  // TODO: re-enable before launch
+  // const backTestLimitReached = !isProUser && backtestCount >= FREE_BACKTEST_LIMIT
+  // const timeLimitReached = !user && !isProUser && minutesElapsed >= FREE_SESSION_MINUTES
+  // const isLimitReached = backTestLimitReached || timeLimitReached
+  // const canRunBacktest = !isLimitReached
+  const isLimitReached = false
+  const canRunBacktest = true
 
-  const limitReason: 'backtests' | 'time' | null = isLimitReached
-    ? (backTestLimitReached ? 'backtests' : 'time')
-    : null
+  // TODO: re-enable before launch
+  // const limitReason: 'backtests' | 'time' | null = isLimitReached
+  //   ? (backTestLimitReached ? 'backtests' : 'time')
+  //   : null
+  const limitReason: 'backtests' | 'time' | null = null
 
   const checkAndIncrement = useCallback((): boolean => {
-    if (isProUser) return true
-    if (isLimitReached) return false
-
-    if (user) {
-      incrementBacktestCount()
-    } else if (guestUsage) {
-      const updated: GuestUsage = {
-        ...guestUsage,
-        backtestCount: guestUsage.backtestCount + 1,
-      }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-      setGuestUsage(updated)
-    }
+    // TODO: re-enable before launch
+    // if (isProUser) return true
+    // if (isLimitReached) return false
+    //
+    // if (user) {
+    //   incrementBacktestCount()
+    // } else if (guestUsage) {
+    //   const updated: GuestUsage = {
+    //     ...guestUsage,
+    //     backtestCount: guestUsage.backtestCount + 1,
+    //   }
+    //   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+    //   setGuestUsage(updated)
+    // }
 
     return true
   }, [isProUser, isLimitReached, user, guestUsage, incrementBacktestCount])

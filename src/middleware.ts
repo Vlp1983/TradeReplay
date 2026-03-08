@@ -30,18 +30,19 @@ export async function middleware(request: NextRequest) {
   // Refresh session — do not remove this
   const { data: { user } } = await supabase.auth.getUser()
 
+  // TODO: re-enable before launch
   // Protected routes — redirect to sign in if not authenticated
-  const protectedPaths = ['/account', '/billing']
-  const isProtectedPath = protectedPaths.some(path =>
-    request.nextUrl.pathname.startsWith(path)
-  )
-
-  if (isProtectedPath && !user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/signin'
-    url.searchParams.set('redirect', request.nextUrl.pathname)
-    return NextResponse.redirect(url)
-  }
+  // const protectedPaths = ['/account', '/billing']
+  // const isProtectedPath = protectedPaths.some(path =>
+  //   request.nextUrl.pathname.startsWith(path)
+  // )
+  //
+  // if (isProtectedPath && !user) {
+  //   const url = request.nextUrl.clone()
+  //   url.pathname = '/signin'
+  //   url.searchParams.set('redirect', request.nextUrl.pathname)
+  //   return NextResponse.redirect(url)
+  // }
 
   return supabaseResponse
 }

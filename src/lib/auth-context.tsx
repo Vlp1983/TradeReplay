@@ -43,7 +43,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [backtestCount, setBacktestCount] = useState(0)
 
   const isDayPass = !!profile?.day_pass_expires_at && new Date(profile.day_pass_expires_at) > new Date()
-  const isPro = subscription?.status === 'active' || subscription?.status === 'trialing' || isDayPass
+  // TODO: re-enable before launch
+  // const isPro = subscription?.status === 'active' || subscription?.status === 'trialing' || isDayPass
+  const isPro = true
 
   const fetchUserData = useCallback(async (userId: string) => {
     const [profileResult, subscriptionResult, usageResult] = await Promise.all([
