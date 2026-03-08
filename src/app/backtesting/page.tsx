@@ -19,7 +19,7 @@ import type {
   Right,
 } from "@/lib/engine/types";
 import type { IntradayBar } from "@/lib/services/polygon";
-import { fetchLiveChain, fetchIntradayPrices, fetchInsights } from "@/lib/engine/fetch-chain";
+import { fetchLiveChain, fetchIntradayPrices, fetchInsights, defaultExpiration } from "@/lib/engine/fetch-chain";
 import { replayContract } from "@/lib/engine/replay";
 
 type Step = "moment" | "chain" | "replay";
@@ -134,7 +134,7 @@ export default function BacktestingPage() {
 
       // Fetch chain and intraday data in parallel
       const [chainResult, intradayResult] = await Promise.all([
-        fetchLiveChain(selection.ticker, selection.date, selection.entryTime, "0dte"),
+        fetchLiveChain(selection.ticker, selection.date, selection.entryTime, defaultExpiration(selection.ticker)),
         fetchIntradayPrices(selection.ticker, selection.date),
       ]);
 

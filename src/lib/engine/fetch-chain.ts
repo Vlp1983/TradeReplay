@@ -11,6 +11,7 @@ import type {
   ChainRow,
   Confidence,
 } from "./types";
+import { ZERO_DTE_TICKERS } from "./types";
 import type { IntradayBar } from "@/lib/services/polygon";
 import { generateChain } from "./chain";
 
@@ -50,30 +51,30 @@ function polygonSymbol(ticker: string): string {
  */
 function pickExpiration(
   available: string[],
-  mode: Expiration
+  mode: Expiration,
+  dateStr: string
 ): string | undefined {
   if (!available.length) return undefined;
 
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
+  // Use the user-selected date for context (not always "today")
+  const refDate = new Date(dateStr + "T12:00:00Z");
+  const refStr = refDate.toISOString().slice(0, 10);
 
   if (mode === "0dte") {
-    // Prefer today's expiration, otherwise nearest
-    return available.find((d) => d === todayStr) ?? available[0];
+    // Prefer same-day expiration matching the selected date
+    return available.find((d) => d === refStr) ?? available[0];
   }
 
-  // "friday" — find the next Friday (or this Friday if today is before it)
-  const dayOfWeek = today.getDay();
-  const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7; // next Friday if today is Fri
-  const friday = new Date(today);
-  friday.setDate(friday.getDate() + daysToFriday);
+  // "friday" — find the next Friday from the selected date
+  const dayOfWeek = refDate.getUTCDay();
+  const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7;
+  const friday = new Date(refDate);
+  friday.setUTCDate(friday.getUTCDate() + daysToFriday);
   const fridayStr = friday.toISOString().slice(0, 10);
 
   return (
     available.find((d) => d === fridayStr) ??
-    // Fallback: nearest expiration after today
-    available.find((d) => d > todayStr) ??
+    available.find((d) => d > refStr) ??
     available[0]
   );
 }
@@ -92,8 +93,18 @@ interface APIChainResponse {
 interface APIContract {
   strike: number;
   premium: number;
+  premiumSource?: "mid" | "last" | "estimated";
   confidence: Confidence;
   isATM: boolean;
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+  };
+  market?: {
+    impliedVolatility?: number;
+  };
 }
 
 function mapContracts(contracts: APIContract[]): ChainRow[] {
@@ -102,6 +113,9 @@ function mapContracts(contracts: APIContract[]): ChainRow[] {
     premium: c.premium,
     confidence: c.confidence,
     isATM: c.isATM,
+    premiumSource: c.premiumSource,
+    greeks: c.greeks,
+    impliedVolatility: c.market?.impliedVolatility,
   }));
 }
 
@@ -131,6 +145,21 @@ export interface LiveChainResult {
 }
 
 /**
+ * Check if a ticker supports 0DTE based on known list.
+ */
+export function has0DTE(ticker: string): boolean {
+  return (ZERO_DTE_TICKERS as readonly string[]).includes(ticker.toUpperCase());
+}
+
+/**
+ * Determine the best default expiration for a ticker.
+ * If ticker supports 0DTE, use "0dte". Otherwise, use "friday".
+ */
+export function defaultExpiration(ticker: string): Expiration {
+  return has0DTE(ticker) ? "0dte" : "friday";
+}
+
+/**
  * Fetch a real options chain from Polygon.io via our API route.
  * Falls back to synthetic data if the API fails.
  */
@@ -150,8 +179,14 @@ export async function fetchLiveChain(
     const data: APIChainResponse = await res.json();
     const availableExps = data.availableExpirations ?? [data.expiration];
 
+    // If 0DTE requested but ticker doesn't have same-day expirations, fallback to nearest
+    let effectiveExpiration = expiration;
+    if (expiration === "0dte" && !has0DTE(ticker)) {
+      effectiveExpiration = "friday";
+    }
+
     // Determine which expiration to use
-    const targetExp = pickExpiration(availableExps, expiration);
+    const targetExp = pickExpiration(availableExps, effectiveExpiration, date);
 
     // If the nearest chain doesn't match our target, re-fetch with the right one
     let chainData = data;
@@ -177,10 +212,12 @@ export async function fetchLiveChain(
       ticker,
       date,
       entryTime,
-      expiration,
+      expiration: effectiveExpiration,
       underlyingPrice: chainData.underlyingPrice,
       calls,
       puts,
+      source: "polygon",
+      availableExpirations: availableExps,
     };
 
     return { chain, availableExpirations: availableExps, source: "polygon" };

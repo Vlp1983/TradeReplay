@@ -256,8 +256,16 @@ function polygonContractToMarket(
   const impliedVolatility = raw.implied_volatility ?? 0;
   const openInterest = raw.open_interest ?? 0;
   const volume = raw.day?.volume ?? 0;
-  const mid = computeMidPrice(bid, ask);
-  const spreadPct = computeSpreadPercent(bid, ask, mid);
+
+  // Price priority: 1) Polygon midpoint  2) computed (bid+ask)/2  3) day.close / last trade
+  let midPrice: number | null = null;
+  if (raw.last_quote?.midpoint && raw.last_quote.midpoint > 0) {
+    midPrice = +raw.last_quote.midpoint.toFixed(4);
+  } else if (bid > 0 && ask > 0) {
+    midPrice = +((bid + ask) / 2).toFixed(4);
+  }
+
+  const spreadPct = computeSpreadPercent(bid, ask, midPrice);
 
   return {
     contractSymbol: raw.details.ticker,
@@ -270,17 +278,25 @@ function polygonContractToMarket(
     impliedVolatility,
     openInterest,
     volume,
-    midPrice: mid,
+    midPrice,
     spreadPercent: spreadPct,
+    greeks: raw.greeks ? {
+      delta: raw.greeks.delta,
+      gamma: raw.greeks.gamma,
+      theta: raw.greeks.theta,
+      vega: raw.greeks.vega,
+    } : undefined,
   };
 }
 
 /**
  * Fetch the options chain for a ticker and expiration date via Polygon snapshots.
+ * Filters to strikes within ±20% of underlying price for focused results.
  */
 export async function getOptionsChain(
   symbol: string,
-  expiration?: string
+  expiration?: string,
+  underlyingPriceHint?: number
 ): Promise<MarketChain> {
   const key = `${symbol.toUpperCase()}:${expiration ?? "nearest"}`;
   const cached = getCached(chainCache, key);
@@ -288,10 +304,15 @@ export async function getOptionsChain(
 
   const ticker = symbol.toUpperCase();
 
-  // Build the snapshot URL
+  // Build the snapshot URL with strike range if we have a price hint
   let path = `/v3/snapshot/options/${encodeURIComponent(ticker)}?limit=250`;
   if (expiration) {
     path += `&expiration_date=${expiration}`;
+  }
+  if (underlyingPriceHint && underlyingPriceHint > 0) {
+    const minStrike = +(underlyingPriceHint * 0.80).toFixed(2);
+    const maxStrike = +(underlyingPriceHint * 1.20).toFixed(2);
+    path += `&strike_price.gte=${minStrike}&strike_price.lte=${maxStrike}`;
   }
 
   const data = await polygonFetch<PolygonOptionsSnapshotResponse>(path);
@@ -341,8 +362,8 @@ export async function getOptionsChain(
 }
 
 /**
- * Fetch available expiration dates for a symbol.
- * Uses the options chain endpoint and extracts unique expirations.
+ * Fetch available expiration dates for a symbol using the reference/contracts endpoint.
+ * This gives us real available expirations (not just whatever the snapshot has).
  */
 export async function getExpirations(
   symbol: string
@@ -352,8 +373,50 @@ export async function getExpirations(
   if (cached) return cached;
 
   const ticker = symbol.toUpperCase();
+  const today = new Date().toISOString().slice(0, 10);
 
-  // Fetch a broad snapshot to discover expirations
+  // Try the reference/contracts endpoint first for accurate expirations
+  try {
+    interface RefContractsResponse {
+      results?: Array<{
+        expiration_date: string;
+        underlying_ticker?: string;
+      }>;
+      status?: string;
+    }
+
+    const refPath = `/v3/reference/options/contracts?underlying_ticker=${encodeURIComponent(ticker)}&expiration_date.gte=${today}&limit=100&sort=expiration_date&order=asc`;
+    const refData = await polygonFetch<RefContractsResponse>(refPath);
+
+    if (refData.results && refData.results.length > 0) {
+      const expSet = new Set<string>();
+      for (const r of refData.results) {
+        if (r.expiration_date) expSet.add(r.expiration_date);
+      }
+      const expirations = Array.from(expSet).sort();
+
+      // Get underlying price from a snapshot call
+      let underlyingPrice = 0;
+      try {
+        const snapshotPath = `/v3/snapshot/options/${encodeURIComponent(ticker)}?limit=1`;
+        const snapshotData = await polygonFetch<PolygonOptionsSnapshotResponse>(snapshotPath);
+        underlyingPrice = snapshotData.results?.[0]?.underlying_asset?.price ?? 0;
+      } catch { /* non-critical */ }
+
+      const summary: MarketChainSummary = {
+        symbol: ticker,
+        underlyingPrice,
+        expirations,
+        fetchedAt: Date.now(),
+      };
+      setCache(summaryCache, key, summary);
+      return summary;
+    }
+  } catch {
+    // Fall through to snapshot-based discovery
+  }
+
+  // Fallback: use snapshot endpoint to discover expirations
   const path = `/v3/snapshot/options/${encodeURIComponent(ticker)}?limit=250`;
   const data = await polygonFetch<PolygonOptionsSnapshotResponse>(path);
 
@@ -363,7 +426,6 @@ export async function getExpirations(
 
   const underlyingPrice = data.results[0]?.underlying_asset?.price ?? 0;
 
-  // Collect unique expirations
   const expSet = new Set<string>();
   for (const r of data.results) {
     if (r.details.expiration_date) {
@@ -418,11 +480,18 @@ function findATMStrike(chain: MarketChain): number {
 
 export function normalizeChain(chain: MarketChain): NormalizedChain {
   const atmStrike = findATMStrike(chain);
+  // Determine ATM tolerance based on strike spacing in the chain
+  const allStrikes = [...chain.calls.map((c) => c.strike), ...chain.puts.map((p) => p.strike)].sort((a, b) => a - b);
+  const strikeSpacing = allStrikes.length >= 2
+    ? Math.min(...allStrikes.slice(1).map((s, i) => s - allStrikes[i]).filter((d) => d > 0))
+    : 1;
+  const atmTolerance = strikeSpacing * 0.6; // slightly more than half a spacing
 
   function normalize(contract: MarketContract): NormalizedContract {
     let premium: number;
     let premiumSource: "mid" | "last" | "estimated";
 
+    // Price priority: midPrice (from midpoint or bid/ask avg) > day close > estimated
     if (contract.midPrice !== null && contract.midPrice > 0) {
       premium = contract.midPrice;
       premiumSource = "mid";
@@ -448,7 +517,7 @@ export function normalizeChain(chain: MarketChain): NormalizedChain {
       premium: +premium.toFixed(2),
       premiumSource,
       confidence,
-      isATM: Math.abs(contract.strike - atmStrike) < 0.5,
+      isATM: Math.abs(contract.strike - atmStrike) <= atmTolerance,
       market: {
         bid: contract.bid,
         ask: contract.ask,
@@ -459,6 +528,7 @@ export function normalizeChain(chain: MarketChain): NormalizedChain {
         openInterest: contract.openInterest,
         volume: contract.volume,
       },
+      greeks: contract.greeks,
     };
   }
 

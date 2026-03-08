@@ -147,33 +147,65 @@ export function replayContract(
     }
   }
 
-  // ── Use the BS-computed premium at entry (no scale factor) ──────────
-  // The entry premium is the raw Black-Scholes value at the first bar.
-  // This avoids inflating/crushing premiums when the chain's market price
-  // diverges from the model price (e.g., stale Polygon data, illiquid options).
-  const bsEntryPremium = allPoints[0]?.price ?? 0.01;
+  // ── Anchor to real or BS entry premium ────────────────────────────
+  // The BS curve gives us the intraday shape. We use the raw BS premium
+  // at entry as the reference for P/L, since the chain's market premium
+  // from Polygon may not match the model (stale data, illiquid options).
+  //
+  // However, if the contract has a real entry premium from a live market
+  // source (mid or last), and it's a reasonable option premium (not the
+  // underlying price), we anchor to it by scaling the BS curve.
+  const bsEntry = allPoints[0]?.price ?? 0.01;
+  const chainPremium = contract.entryPremium;
 
-  // Compute P/L relative to the BS entry premium
+  // Use real chain premium if it looks like a valid option price:
+  // - Must be > 0.01 (not the $0.01 fallback)
+  // - Must not be close to the underlying price (not the stock price)
+  // - Ratio to BS entry should be within 0.2x to 5x (reasonable disagreement)
+  const chainLooksValid = chainPremium > 0.02
+    && (bsEntry > 0.01 ? (chainPremium / bsEntry) < 5 && (chainPremium / bsEntry) > 0.2 : true);
+
+  let entryPremium: number;
+  if (chainLooksValid && chainPremium > 0.02) {
+    // Anchor to the real market premium, scale BS curve to match
+    entryPremium = chainPremium;
+    const scaleFactor = bsEntry > 0.01 ? chainPremium / bsEntry : 1;
+    for (const pt of allPoints) {
+      pt.price = +Math.max(pt.price * scaleFactor, 0.01).toFixed(2);
+    }
+  } else {
+    // Use raw BS premiums (no scaling)
+    entryPremium = bsEntry;
+  }
+
+  // Compute P/L relative to entry premium
   for (let i = 0; i < allPoints.length; i++) {
     const premium = allPoints[i].price;
-    allPoints[i].pl_dollar = +((premium - bsEntryPremium) * 100).toFixed(0);
-    allPoints[i].pl_pct = bsEntryPremium > 0.01
-      ? +(((premium - bsEntryPremium) / bsEntryPremium) * 100).toFixed(1)
+    allPoints[i].pl_dollar = +((premium - entryPremium) * 100).toFixed(0);
+    allPoints[i].pl_pct = entryPremium > 0.01
+      ? +(((premium - entryPremium) / entryPremium) * 100).toFixed(1)
       : 0;
+  }
+
+  // Force first point to exact entry
+  if (allPoints.length > 0) {
+    allPoints[0].price = entryPremium;
+    allPoints[0].pl_dollar = 0;
+    allPoints[0].pl_pct = 0;
   }
 
   // Split into same-day and full series
   const sameDayPoints = allPoints.filter((p) => p.dayIndex === 0);
   const toExpirationPoints = allPoints;
 
-  // Compute metrics using BS-derived entry premium
-  const metrics = computeMetrics(allPoints, bsEntryPremium, entryIV, entryDelta);
+  // Compute metrics
+  const metrics = computeMetrics(allPoints, entryPremium, entryIV, entryDelta);
 
   // Generate trade insights (key moments in price action)
-  const keyMoments = detectTradeInsights(allPoints, sameDayPoints, bsEntryPremium);
+  const keyMoments = detectTradeInsights(allPoints, sameDayPoints, entryPremium);
 
   return {
-    contract: { ...contract, entryPremium: bsEntryPremium },
+    contract: { ...contract, entryPremium },
     sameDayPoints,
     toExpirationPoints,
     metrics,

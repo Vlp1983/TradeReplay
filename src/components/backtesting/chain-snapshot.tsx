@@ -11,6 +11,7 @@ import type {
   Right,
   SelectedContract,
 } from "@/lib/engine/types";
+import { ZERO_DTE_TICKERS } from "@/lib/engine/types";
 import { formatDateDisplay, getExpirationLabel, to12Hour } from "@/lib/engine/dates";
 
 interface ChainSnapshotProps {
@@ -51,6 +52,12 @@ export function ChainSnapshot({
     selectedRight === "call"
       ? chain.calls.find((r) => r.strike === selectedStrike)
       : chain.puts.find((r) => r.strike === selectedStrike);
+
+  // Determine if this is live data or estimated
+  const isLiveData = chain.source === "polygon";
+
+  // Show 0DTE tab only if ticker is in the known 0DTE list
+  const show0DTE = (ZERO_DTE_TICKERS as readonly string[]).includes(chain.ticker);
 
   function handleRowClick(strike: number, right: Right) {
     setSelectedStrike(strike);
@@ -99,19 +106,21 @@ export function ChainSnapshot({
         ET &mdash; ${fmtStrike(chain.underlyingPrice)}
       </p>
 
-      {/* Expiration toggle + MVP tag */}
+      {/* Expiration toggle + data source tag */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex rounded-lg border border-border p-0.5">
-          <button
-            onClick={() => onExpirationChange("0dte")}
-            className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
-              chain.expiration === "0dte"
-                ? "bg-accent text-white"
-                : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            0DTE
-          </button>
+          {show0DTE && (
+            <button
+              onClick={() => onExpirationChange("0dte")}
+              className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                chain.expiration === "0dte"
+                  ? "bg-accent text-white"
+                  : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              0DTE
+            </button>
+          )}
           <button
             onClick={() => onExpirationChange("friday")}
             className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
@@ -124,7 +133,7 @@ export function ChainSnapshot({
           </button>
         </div>
         <Badge variant="outline" className="text-[11px]">
-          Estimated (MVP) &bull; 15-min resolution
+          {isLiveData ? "Live Data" : "Estimated (BS)"}
         </Badge>
       </div>
 
@@ -145,12 +154,14 @@ export function ChainSnapshot({
           rows={chain.calls}
           selectedStrike={selectedRight === "call" ? selectedStrike : null}
           onRowClick={(strike) => handleRowClick(strike, "call")}
+          isLiveData={isLiveData}
         />
         <ChainTable
           right="put"
           rows={chain.puts}
           selectedStrike={selectedRight === "put" ? selectedStrike : null}
           onRowClick={(strike) => handleRowClick(strike, "put")}
+          isLiveData={isLiveData}
         />
       </div>
 
@@ -165,6 +176,12 @@ export function ChainSnapshot({
                 {selectedRight === "call" ? "C" : "P"}
               </span>{" "}
               &mdash; ${selectedRow.premium.toFixed(2)} per share · ${(selectedRow.premium * 100).toFixed(2)} per contract{" "}
+              {selectedRow.greeks?.delta != null && (
+                <span className="text-text-muted">
+                  &Delta; {selectedRow.greeks.delta.toFixed(2)}
+                </span>
+              )}
+              {" "}
               <span className="text-text-muted">
                 ({getExpirationLabel(chain.date, chain.expiration)})
               </span>
@@ -190,13 +207,16 @@ function ChainTable({
   rows,
   selectedStrike,
   onRowClick,
+  isLiveData,
 }: {
   right: Right;
   rows: ChainRow[];
   selectedStrike: number | null;
   onRowClick: (strike: number) => void;
+  isLiveData: boolean;
 }) {
   const isCall = right === "call";
+  const hasGreeks = rows.some((r) => r.greeks?.delta != null);
 
   return (
     <div>
@@ -219,8 +239,13 @@ function ChainTable({
             <tr className="border-b border-border bg-bg">
               <th className="px-3 py-2 font-medium text-text-muted">Strike</th>
               <th className="px-3 py-2 font-medium text-text-muted">
-                Est. Premium (per share · per contract)
+                {isLiveData ? "Premium" : "Est. Premium"} (per share · per contract)
               </th>
+              {hasGreeks && (
+                <th className="hidden px-3 py-2 font-medium text-text-muted sm:table-cell">
+                  Delta
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -252,6 +277,11 @@ function ChainTable({
                       · ${(row.premium * 100).toFixed(2)}/ct
                     </span>
                   </td>
+                  {hasGreeks && (
+                    <td className="hidden px-3 py-2.5 font-mono text-text-muted sm:table-cell">
+                      {row.greeks?.delta != null ? row.greeks.delta.toFixed(2) : "—"}
+                    </td>
+                  )}
                 </tr>
               );
             })}

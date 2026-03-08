@@ -58,6 +58,11 @@ export type Confidence = "High" | "Med" | "Low";
 export type ChartView = "pl_pct" | "pl_dollar" | "price";
 export type ChartRange = "same_day" | "to_expiration";
 
+/** Tickers known to have 0DTE (same-day) expirations */
+export const ZERO_DTE_TICKERS = [
+  "SPY", "QQQ", "IWM", "AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "SPX", "NDX",
+] as const;
+
 export interface MomentSelection {
   ticker: Ticker;
   date: string;        // YYYY-MM-DD
@@ -66,9 +71,20 @@ export interface MomentSelection {
 
 export interface ChainRow {
   strike: number;
-  premium: number;     // estimated premium at entry
+  premium: number;     // best available premium at entry
   confidence: Confidence;
   isATM: boolean;
+  /** "mid" = from bid/ask midpoint, "last" = last trade, "estimated" = BS fallback */
+  premiumSource?: "mid" | "last" | "estimated";
+  /** Greeks from Polygon (may be undefined) */
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+  };
+  /** Real IV from Polygon (may be undefined) */
+  impliedVolatility?: number;
 }
 
 export interface ChainData {
@@ -79,6 +95,10 @@ export interface ChainData {
   underlyingPrice: number;
   calls: ChainRow[];
   puts: ChainRow[];
+  /** Whether this chain is from live Polygon data or synthetic BS */
+  source?: "polygon" | "synthetic";
+  /** Available expiration dates from Polygon */
+  availableExpirations?: string[];
 }
 
 export interface SelectedContract {

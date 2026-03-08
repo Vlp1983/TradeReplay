@@ -20,6 +20,13 @@ export interface MarketContract {
   midPrice: number | null;
   /** (ask - bid) / midPrice — measures liquidity; null if midPrice is invalid */
   spreadPercent: number | null;
+  /** Greeks from Polygon snapshot (may be null if unavailable) */
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+  };
 }
 
 /** Full options chain for a single expiration date */
@@ -49,7 +56,7 @@ export interface NormalizedContract {
   strike: number;
   expiration: string;
   right: "call" | "put";
-  /** Best available price: midPrice > lastPrice > pathA/B estimate */
+  /** Best available price: midpoint > (bid+ask)/2 > day.close > BS estimate */
   premium: number;
   premiumSource: "mid" | "last" | "estimated";
   /** Confidence based on spread tightness + volume */
@@ -65,6 +72,13 @@ export interface NormalizedContract {
     impliedVolatility: number;
     openInterest: number;
     volume: number;
+  };
+  /** Greeks from Polygon (may be undefined if not available) */
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
   };
 }
 
