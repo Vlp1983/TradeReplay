@@ -1,5 +1,5 @@
 /**
- * Client-side bridge: fetch real options chain from /api/options (Yahoo Finance)
+ * Client-side bridge: fetch real options chain from /api/options (Polygon.io)
  * and map it to our ChainData format. Falls back to synthetic generateChain()
  * if the API call fails (e.g. no options data for crypto/futures tickers).
  */
@@ -11,12 +11,12 @@ import type {
   ChainRow,
   Confidence,
 } from "./types";
-import type { IntradayBar } from "@/lib/services/yahoo-finance";
+import type { IntradayBar } from "@/lib/services/polygon";
 import { generateChain } from "./chain";
 
-// ─── Yahoo symbol mapping ────────────────────────────────────────────
+// ─── Polygon symbol mapping ─────────────────────────────────────────
 
-const YAHOO_SYMBOLS: Record<string, string> = {
+const POLYGON_SYMBOLS: Record<string, string> = {
   // Equities/ETFs — same symbol
   SPY: "SPY",
   QQQ: "QQQ",
@@ -24,28 +24,28 @@ const YAHOO_SYMBOLS: Record<string, string> = {
   TSLA: "TSLA",
   NVDA: "NVDA",
   AMZN: "AMZN",
-  // Futures — Yahoo uses =F suffix
-  ES: "ES=F",
-  NQ: "NQ=F",
-  CL: "CL=F",
-  GC: "GC=F",
-  SI: "SI=F",
-  // Crypto — Yahoo uses -USD suffix
-  BTC: "BTC-USD",
-  ETH: "ETH-USD",
-  SOL: "SOL-USD",
-  DOGE: "DOGE-USD",
-  XRP: "XRP-USD",
+  // Futures — use base symbol for Polygon
+  ES: "ES",
+  NQ: "NQ",
+  CL: "CL",
+  GC: "GC",
+  SI: "SI",
+  // Crypto — Polygon uses X: prefix
+  BTC: "X:BTCUSD",
+  ETH: "X:ETHUSD",
+  SOL: "X:SOLUSD",
+  DOGE: "X:DOGEUSD",
+  XRP: "X:XRPUSD",
 };
 
-function yahooSymbol(ticker: string): string {
-  return YAHOO_SYMBOLS[ticker] ?? ticker;
+function polygonSymbol(ticker: string): string {
+  return POLYGON_SYMBOLS[ticker] ?? ticker;
 }
 
 // ─── Expiration date resolution ──────────────────────────────────────
 
 /**
- * Given Yahoo's list of available expirations, pick the best match
+ * Given the list of available expirations, pick the best match
  * for our "0dte" or "friday" modes.
  */
 function pickExpiration(
@@ -127,11 +127,11 @@ function trimAroundATM(rows: ChainRow[], count = 10): ChainRow[] {
 export interface LiveChainResult {
   chain: ChainData;
   availableExpirations: string[];
-  source: "yahoo" | "synthetic";
+  source: "polygon" | "synthetic";
 }
 
 /**
- * Fetch a real options chain from Yahoo Finance via our API route.
+ * Fetch a real options chain from Polygon.io via our API route.
  * Falls back to synthetic data if the API fails.
  */
 export async function fetchLiveChain(
@@ -141,7 +141,7 @@ export async function fetchLiveChain(
   expiration: Expiration
 ): Promise<LiveChainResult> {
   try {
-    const symbol = yahooSymbol(ticker);
+    const symbol = polygonSymbol(ticker);
 
     // First fetch: get available expirations + nearest chain
     const res = await fetch(`/api/options?symbol=${encodeURIComponent(symbol)}`);
@@ -170,7 +170,7 @@ export async function fetchLiveChain(
 
     // Ensure at least one ATM row exists
     if (calls.length === 0 && puts.length === 0) {
-      throw new Error("Empty chain from Yahoo");
+      throw new Error("Empty chain from Polygon");
     }
 
     const chain: ChainData = {
@@ -183,11 +183,11 @@ export async function fetchLiveChain(
       puts,
     };
 
-    return { chain, availableExpirations: availableExps, source: "yahoo" };
+    return { chain, availableExpirations: availableExps, source: "polygon" };
   } catch (err) {
     // Fall back to synthetic
     console.warn(
-      `[fetchLiveChain] Yahoo fetch failed for ${ticker}, using synthetic:`,
+      `[fetchLiveChain] Polygon fetch failed for ${ticker}, using synthetic:`,
       err
     );
     const chain = generateChain(ticker, date, entryTime, expiration);
@@ -199,7 +199,7 @@ export async function fetchLiveChain(
 
 export interface IntradayResult {
   bars: IntradayBar[];
-  source: "yahoo" | "none";
+  source: "polygon" | "none";
 }
 
 /**
@@ -211,7 +211,7 @@ export async function fetchIntradayPrices(
   date: string
 ): Promise<IntradayResult> {
   try {
-    const symbol = yahooSymbol(ticker);
+    const symbol = polygonSymbol(ticker);
     const res = await fetch(
       `/api/intraday?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`
     );
@@ -222,7 +222,7 @@ export async function fetchIntradayPrices(
       throw new Error("No bars returned");
     }
 
-    return { bars: data.bars as IntradayBar[], source: "yahoo" };
+    return { bars: data.bars as IntradayBar[], source: "polygon" };
   } catch (err) {
     console.warn(
       `[fetchIntradayPrices] Failed for ${ticker} on ${date}:`,

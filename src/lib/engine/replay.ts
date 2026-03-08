@@ -2,7 +2,7 @@
  * Generate the full contract replay — price path, P/L series,
  * metrics, and key insights.
  *
- * When real Yahoo intraday bars are available, uses REAL underlying
+ * When real Polygon intraday bars are available, uses REAL underlying
  * prices and Black-Scholes to estimate option premiums at each tick.
  * Falls back to an improved synthetic path with realistic microstructure.
  */
@@ -14,7 +14,7 @@ import type {
   KeyMoment,
   ReplayResult,
 } from "./types";
-import type { IntradayBar } from "@/lib/services/yahoo-finance";
+import type { IntradayBar } from "@/lib/services/polygon";
 import {
   getUnderlyingPrice,
   estimatePremium,
@@ -58,7 +58,7 @@ export function replayContract(
   const hasRealData = intradayBars && intradayBars.length >= 5;
 
   if (hasRealData) {
-    // Use REAL Yahoo intraday data — filter from entry time onward
+    // Use REAL Polygon intraday data — filter from entry time onward
     const entryMinutes = parseTimeMinutes(entryTime);
     const filtered = intradayBars.filter((b) => {
       return parseTimeMinutes(b.time) >= entryMinutes;

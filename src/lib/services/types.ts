@@ -1,10 +1,10 @@
 /**
- * Types for the Yahoo Finance options data service.
- * These represent real market data fetched from Yahoo Finance,
- * normalized for our dual-confirmation backtesting engine.
+ * Types for the market data service (Polygon.io).
+ * These represent real market data normalized for our
+ * dual-confirmation backtesting engine.
  */
 
-/** Raw contract data pulled from Yahoo Finance */
+/** Raw contract data pulled from market data provider */
 export interface MarketContract {
   contractSymbol: string;
   strike: number;
@@ -42,7 +42,7 @@ export interface MarketChainSummary {
 
 /**
  * Normalized contract output for the dual-confirmation engine.
- * Bridges real Yahoo data → our ChainRow / SelectedContract types.
+ * Bridges real market data → our ChainRow / SelectedContract types.
  */
 export interface NormalizedContract {
   contractSymbol: string;

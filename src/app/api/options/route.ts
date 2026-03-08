@@ -1,19 +1,14 @@
 /**
  * GET /api/options
  *
- * Fetches real options data from Yahoo Finance and returns it
+ * Fetches real options data from Polygon.io and returns it
  * normalized for the dual-confirmation backtesting engine.
  *
  * Query parameters:
- *   symbol      (required)  — e.g. SPY, QQQ, AAPL, BTCUSD
+ *   symbol      (required)  — e.g. SPY, QQQ, AAPL
  *   expiration  (optional)  — YYYY-MM-DD, defaults to nearest
  *   strike      (optional)  — filter to a single strike
  *   right       (optional)  — "call" or "put"
- *
- * Examples:
- *   /api/options?symbol=SPY
- *   /api/options?symbol=SPY&expiration=2026-03-20
- *   /api/options?symbol=SPY&expiration=2026-03-20&strike=520&right=call
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,7 +16,7 @@ import {
   fetchNormalizedChain,
   getExpirations,
   getContract,
-} from "@/lib/services/yahoo-finance";
+} from "@/lib/services/polygon";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);

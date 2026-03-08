@@ -1,17 +1,17 @@
 /**
  * GET /api/intraday
  *
- * Fetches real intraday price bars from Yahoo Finance chart API.
+ * Fetches real intraday price bars from Polygon.io aggregates API.
  *
  * Query parameters:
- *   symbol  (required) — e.g. SPY, AAPL, BTC-USD, ES=F
+ *   symbol  (required) — e.g. SPY, AAPL, ES
  *   date    (required) — YYYY-MM-DD
  *
  * Returns: { symbol, date, bars: IntradayBar[] }
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getIntradayChart } from "@/lib/services/yahoo-finance";
+import { getIntradayBars } from "@/lib/services/polygon";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const bars = await getIntradayChart(symbol, date);
+    const bars = await getIntradayBars(symbol, date);
     return NextResponse.json({
       symbol: symbol.toUpperCase(),
       date,
@@ -41,6 +41,20 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
+    const code = (err as Error & { code?: string }).code;
+
+    if (code === "LOOKBACK_EXCEEDED") {
+      return NextResponse.json(
+        {
+          error: "Date exceeds 60-day lookback limit",
+          code: "LOOKBACK_EXCEEDED",
+          symbol: symbol.toUpperCase(),
+          date,
+        },
+        { status: 422 }
+      );
+    }
+
     return NextResponse.json(
       {
         error: "Failed to fetch intraday data",

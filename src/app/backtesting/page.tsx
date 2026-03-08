@@ -18,7 +18,7 @@ import type {
   ReplayResult,
   Right,
 } from "@/lib/engine/types";
-import type { IntradayBar } from "@/lib/services/yahoo-finance";
+import type { IntradayBar } from "@/lib/services/polygon";
 import { fetchLiveChain, fetchIntradayPrices, fetchInsights } from "@/lib/engine/fetch-chain";
 import { replayContract } from "@/lib/engine/replay";
 
@@ -31,7 +31,7 @@ export default function BacktestingPage() {
   const [loadingChain, setLoadingChain] = useState(false);
   const [loadingReplay, setLoadingReplay] = useState(false);
   const [moment, setMoment] = useState<MomentSelection | null>(null);
-  const [dataSource, setDataSource] = useState<"yahoo" | "synthetic">("synthetic");
+  const [dataSource, setDataSource] = useState<"polygon" | "synthetic">("synthetic");
   const [intradayBars, setIntradayBars] = useState<IntradayBar[]>([]);
   const [selectedRight, setSelectedRight] = useState<Right>("call");
   const [showPaywall, setShowPaywall] = useState(false);
@@ -232,12 +232,12 @@ export default function BacktestingPage() {
               {chainData && (
                 <span
                   className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
-                    dataSource === "yahoo"
+                    dataSource === "polygon"
                       ? "bg-green-500/10 text-green-400"
                       : "bg-yellow-500/10 text-yellow-400"
                   }`}
                 >
-                  {dataSource === "yahoo" ? "Live Yahoo Data" : "Synthetic Estimates"}
+                  {dataSource === "polygon" ? "Live Market Data" : "Synthetic Estimates"}
                 </span>
               )}
             </div>
