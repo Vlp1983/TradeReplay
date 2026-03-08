@@ -99,7 +99,7 @@ export function useGate(): UseGateResult {
     // }
 
     return true
-  }, [isProUser, isLimitReached, user, guestUsage, incrementBacktestCount])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- TODO: re-enable before launch
 
   return {
     canRunBacktest,
