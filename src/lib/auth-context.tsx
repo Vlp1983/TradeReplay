@@ -11,6 +11,7 @@ interface AuthContextType {
   profile: Profile | null
   subscription: Subscription | null
   isPro: boolean
+  isDayPass: boolean
   isLoading: boolean
   backtestCount: number
   incrementBacktestCount: () => Promise<void>
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   subscription: null,
   isPro: false,
+  isDayPass: false,
   isLoading: true,
   backtestCount: 0,
   incrementBacktestCount: async () => {},
@@ -40,7 +42,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [backtestCount, setBacktestCount] = useState(0)
 
-  const isPro = subscription?.status === 'active' || subscription?.status === 'trialing'
+  const isDayPass = !!profile?.day_pass_expires_at && new Date(profile.day_pass_expires_at) > new Date()
+  const isPro = subscription?.status === 'active' || subscription?.status === 'trialing' || isDayPass
 
   const fetchUserData = useCallback(async (userId: string) => {
     const [profileResult, subscriptionResult, usageResult] = await Promise.all([
@@ -132,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       profile,
       subscription,
       isPro,
+      isDayPass,
       isLoading,
       backtestCount,
       incrementBacktestCount,

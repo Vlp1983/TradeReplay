@@ -7,6 +7,7 @@ import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
 import { KeyMomentsList } from "./key-moments-list";
 import { InsightsPanel } from "./insights-panel";
+import { DeepDivePanel } from "./deep-dive-panel";
 import type { ReplayResult, Right } from "@/lib/engine/types";
 import { getExpirationLabel, to12Hour } from "@/lib/engine/dates";
 
@@ -130,13 +131,18 @@ export function ContractReplay({
       </div>
 
       {/* What Happened & Why — AI-generated contextual analysis */}
-      <div className="mb-6">
+      <div className="mb-5">
         <InsightsPanel
           insights={result.insights}
           source={result.insightsSource}
           ticker={contract.ticker}
           date={contract.date}
         />
+      </div>
+
+      {/* Deep Dive — strategy-specific AI analysis */}
+      <div className="mb-6">
+        <DeepDivePanel result={result} />
       </div>
 
       {/* Actions */}

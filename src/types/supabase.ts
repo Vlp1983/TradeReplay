@@ -16,6 +16,7 @@ export interface Database {
           full_name: string | null
           avatar_url: string | null
           stripe_customer_id: string | null
+          day_pass_expires_at: string | null
           created_at: string
           updated_at: string
         }
@@ -25,6 +26,7 @@ export interface Database {
           full_name?: string | null
           avatar_url?: string | null
           stripe_customer_id?: string | null
+          day_pass_expires_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -34,6 +36,7 @@ export interface Database {
           full_name?: string | null
           avatar_url?: string | null
           stripe_customer_id?: string | null
+          day_pass_expires_at?: string | null
           updated_at?: string
         }
         Relationships: []

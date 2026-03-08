@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Lock, Zap, Check } from 'lucide-react'
+import { Lock, Zap, Check, Clock, Loader2 } from 'lucide-react'
 import { AuthModal } from '@/components/auth/AuthModal'
 import { useAuth } from '@/lib/auth-context'
 
@@ -16,12 +16,30 @@ export function PaywallModal({ isOpen, onClose, reason = 'backtests' }: PaywallM
   const router = useRouter()
   const { user } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
+  const [dayPassLoading, setDayPassLoading] = useState(false)
 
   if (!isOpen) return null
 
   const monthlyPrice = '$15.99'
   const annualPrice = '$129.99'
   const annualMonthly = '$10.83'
+
+  async function handleDayPass() {
+    if (!user) {
+      setShowAuth(true)
+      return
+    }
+    setDayPassLoading(true)
+    try {
+      const res = await fetch('/api/stripe/day-pass', { method: 'POST' })
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch {
+      setDayPassLoading(false)
+    }
+  }
 
   if (showAuth) {
     return (
@@ -53,7 +71,24 @@ export function PaywallModal({ isOpen, onClose, reason = 'backtests' }: PaywallM
           </p>
         </div>
 
-        <div className="p-6 grid grid-cols-2 gap-3">
+        <div className="p-6 grid grid-cols-3 gap-3">
+          {/* Day Pass */}
+          <button
+            onClick={handleDayPass}
+            disabled={dayPassLoading}
+            className="group p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10 transition-all text-left relative"
+          >
+            <div className="flex items-center gap-1 mb-1">
+              <Clock size={12} className="text-amber-400" />
+              <span className="text-amber-400 text-xs font-medium">Day Pass</span>
+            </div>
+            <div className="text-2xl font-bold text-white">
+              {dayPassLoading ? <Loader2 size={24} className="animate-spin" /> : '$4.99'}
+            </div>
+            <div className="text-slate-500 text-xs">24 hours</div>
+          </button>
+
+          {/* Monthly */}
           <button
             onClick={() => router.push('/pricing?plan=monthly')}
             className="group p-4 rounded-xl border border-[#1E293B] hover:border-blue-500/50 bg-white/5 hover:bg-blue-500/5 transition-all text-left"
@@ -63,6 +98,7 @@ export function PaywallModal({ isOpen, onClose, reason = 'backtests' }: PaywallM
             <div className="text-slate-500 text-xs">per month</div>
           </button>
 
+          {/* Annual */}
           <button
             onClick={() => router.push('/pricing?plan=annual')}
             className="group p-4 rounded-xl border border-blue-500/50 bg-blue-500/10 hover:bg-blue-500/15 transition-all text-left relative"
