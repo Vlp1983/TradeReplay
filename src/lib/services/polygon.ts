@@ -125,8 +125,8 @@ interface PolygonAggResponse {
 }
 
 /**
- * Fetch 1-minute OHLCV bars for a ticker on a specific date.
- * Enforces a 60-day lookback guard.
+ * Fetch 5-minute OHLCV bars for a ticker on a specific date.
+ * Used for chart display. Enforces a 60-day lookback guard.
  */
 export async function getIntradayBars(
   symbol: string,
@@ -149,7 +149,7 @@ export async function getIntradayBars(
   if (cached) return cached;
 
   const ticker = symbol.toUpperCase();
-  const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/minute/${date}/${date}?adjusted=true&sort=asc&limit=500`;
+  const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=500`;
 
   const data = await polygonFetch<PolygonAggResponse>(path);
 

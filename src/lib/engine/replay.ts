@@ -3,7 +3,8 @@
  * metrics, and key insights.
  *
  * When real Polygon intraday bars are available, uses REAL underlying
- * prices and Black-Scholes to estimate option premiums at each tick.
+ * prices and Black-Scholes to compute option premiums at each bar.
+ * The IV is taken from the entry bar and held constant.
  * Falls back to an improved synthetic path with realistic microstructure.
  */
 
@@ -17,11 +18,11 @@ import type {
 import type { IntradayBar } from "@/lib/services/polygon";
 import {
   getUnderlyingPrice,
-  estimatePremium,
   getImpliedVol,
   computeDelta,
   BASE_VOLATILITY,
   seedFromMoment,
+  blackScholesPrice,
 } from "./pricing";
 import { getExpirationDays } from "./chain";
 
@@ -48,92 +49,131 @@ export function replayContract(
   const isCall = right === "call";
   const expirationDays = getExpirationDays(date, expiration);
   const baseVol = BASE_VOLATILITY[ticker] ?? 0.22;
-
-  // ── Build underlying price series ──────────────────────────────────
-  let underlyingPrices: number[];
-  let labels: string[];
-  let times: string[];
-  let dayIndices: number[];
-
   const hasRealData = intradayBars && intradayBars.length >= 5;
 
-  if (hasRealData) {
-    // Use REAL Polygon intraday data — filter from entry time onward
-    const entryMinutes = parseTimeMinutes(entryTime);
-    const filtered = intradayBars.filter((b) => {
-      return parseTimeMinutes(b.time) >= entryMinutes;
-    });
+  let allPoints: TimePoint[];
+  let entryIV: number;
+  let entryDelta: number;
 
-    // Need at least a few points
+  if (hasRealData) {
+    // ── REAL DATA PATH: Use actual underlying prices + Black-Scholes ──
+    const entryMinutes = parseTimeMinutes(entryTime);
+    const filtered = intradayBars.filter(
+      (b) => parseTimeMinutes(b.time) >= entryMinutes
+    );
     const bars = filtered.length >= 3 ? filtered : intradayBars;
 
-    underlyingPrices = bars.map((b) => b.close);
-    labels = bars.map((b) => b.label);
-    times = bars.map((b) => b.time);
-    dayIndices = bars.map(() => 0);
+    // Compute expiration timestamp (market close on expiration day)
+    // For 0DTE: close of same day. For friday: close of friday.
+    const expirationDate = getExpirationDateStr(date, expirationDays);
+    const expirationMs = new Date(expirationDate + "T21:00:00Z").getTime(); // 4PM ET = 21:00 UTC
+
+    // Use entry bar IV, held constant throughout
+    const entryUnderlying = bars[0].close;
+    entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
+    const r = 0.05;
+
+    // Compute entry time-to-expiry for delta
+    const entryT = Math.max((expirationMs - bars[0].timestamp) / (365.25 * 24 * 3600 * 1000), 0.0001);
+    entryDelta = computeDelta(entryUnderlying, strike, entryT, isCall, entryIV, r);
+
+    allPoints = [];
+    for (let i = 0; i < bars.length; i++) {
+      const S = bars[i].close;
+      // Time to expiry in years from this bar's timestamp
+      const T = Math.max(
+        (expirationMs - bars[i].timestamp) / (365.25 * 24 * 3600 * 1000),
+        0.0001
+      );
+
+      let premium = blackScholesPrice(S, strike, T, isCall, entryIV, r);
+
+      // Last bar for 0DTE: use intrinsic value
+      if (i === bars.length - 1 && expirationDays === 0) {
+        premium = isCall
+          ? Math.max(S - strike, 0)
+          : Math.max(strike - S, 0);
+      }
+
+      premium = +Math.max(premium, 0.01).toFixed(2);
+
+      allPoints.push({
+        time: bars[i].time,
+        label: bars[i].label,
+        price: premium,
+        pl_dollar: 0,
+        pl_pct: 0,
+        dayIndex: 0,
+      });
+    }
+
+    // Anchor: scale the entire path so the entry matches the real entry premium
+    const rawEntry = allPoints[0]?.price ?? entryPremium;
+    const scaleFactor = rawEntry > 0.01 ? entryPremium / rawEntry : 1;
+
+    for (let i = 0; i < allPoints.length; i++) {
+      const premium = +Math.max(allPoints[i].price * scaleFactor, 0.01).toFixed(2);
+      allPoints[i].price = premium;
+      allPoints[i].pl_dollar = +((premium - entryPremium) * 100).toFixed(0);
+      allPoints[i].pl_pct = entryPremium > 0
+        ? +(((premium - entryPremium) / entryPremium) * 100).toFixed(1)
+        : 0;
+    }
   } else {
-    // Improved synthetic path with realistic microstructure
+    // ── SYNTHETIC PATH: Generate realistic underlying + BS pricing ──
     const path = generateRealisticPath(
       ticker, date, entryTime, expirationDays, baseVol
     );
-    underlyingPrices = path.prices;
-    labels = path.labels;
-    times = path.times;
-    dayIndices = path.dayIndices;
-  }
 
-  // ── Compute option premium at each point via Black-Scholes ─────────
-  const totalPoints = underlyingPrices.length;
-  const totalMinutesRemaining = expirationDays === 0
-    ? minutesUntilClose(entryTime)
-    : expirationDays * 390 + minutesUntilClose(entryTime);
+    const totalMinutesRemaining = expirationDays === 0
+      ? minutesUntilClose(entryTime)
+      : expirationDays * 390 + minutesUntilClose(entryTime);
 
-  const allPoints: TimePoint[] = [];
+    const entryUnderlying = path.prices[0];
+    entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
+    const r = 0.05;
+    const totalT = Math.max(totalMinutesRemaining / (252 * 390), 0.0001);
+    entryDelta = computeDelta(entryUnderlying, strike, totalT, isCall, entryIV, r);
 
-  for (let i = 0; i < totalPoints; i++) {
-    const S = underlyingPrices[i];
-    const fraction = i / Math.max(totalPoints - 1, 1);
-    const minutesLeft = totalMinutesRemaining * (1 - fraction);
-    const T = Math.max(minutesLeft / (252 * 390), 0.0001);
+    allPoints = [];
+    for (let i = 0; i < path.prices.length; i++) {
+      const S = path.prices[i];
+      const fraction = i / Math.max(path.prices.length - 1, 1);
+      const minutesLeft = totalMinutesRemaining * (1 - fraction);
+      const T = Math.max(minutesLeft / (252 * 390), 0.0001);
 
-    const iv = getImpliedVol(S, strike, baseVol);
-    const est = estimatePremium(S, strike, T, isCall, iv);
-    let premium = est.premium;
+      let premium = blackScholesPrice(S, strike, T, isCall, entryIV, r);
 
-    // At expiration (last point), use intrinsic value
-    if (i === totalPoints - 1 && expirationDays === 0) {
-      premium = isCall
-        ? Math.max(S - strike, 0)
-        : Math.max(strike - S, 0);
-      premium = +premium.toFixed(2);
+      if (i === path.prices.length - 1 && expirationDays === 0) {
+        premium = isCall
+          ? Math.max(S - strike, 0)
+          : Math.max(strike - S, 0);
+      }
+
+      premium = +Math.max(premium, 0.01).toFixed(2);
+
+      allPoints.push({
+        time: path.times[i],
+        label: path.labels[i],
+        price: premium,
+        pl_dollar: 0,
+        pl_pct: 0,
+        dayIndex: path.dayIndices[i],
+      });
     }
 
-    allPoints.push({
-      time: times[i],
-      label: labels[i],
-      price: premium,
-      pl_dollar: 0,
-      pl_pct: 0,
-      dayIndex: dayIndices[i],
-    });
-  }
+    // Anchor to entry premium
+    const rawEntry = allPoints[0]?.price ?? entryPremium;
+    const scaleFactor = rawEntry > 0.01 ? entryPremium / rawEntry : 1;
 
-  // ── Anchor to actual entry premium ─────────────────────────────────
-  // Scale the entire premium path proportionally so the first point
-  // matches the real entry premium. This preserves the shape/direction
-  // while anchoring to reality.
-  const rawEntry = allPoints[0]?.price ?? entryPremium;
-  const scaleFactor = rawEntry > 0.01 ? entryPremium / rawEntry : 1;
-
-  for (let i = 0; i < allPoints.length; i++) {
-    // Blend scale toward 1.0 at expiration so intrinsic value is preserved
-    const t = i / Math.max(allPoints.length - 1, 1);
-    const blendedScale = scaleFactor + (1 - scaleFactor) * t * 0.5;
-    const premium = Math.max(+(allPoints[i].price * blendedScale).toFixed(2), 0.01);
-
-    allPoints[i].price = premium;
-    allPoints[i].pl_dollar = +((premium - entryPremium) * 100).toFixed(0);
-    allPoints[i].pl_pct = +(((premium - entryPremium) / entryPremium) * 100).toFixed(1);
+    for (let i = 0; i < allPoints.length; i++) {
+      const premium = +Math.max(allPoints[i].price * scaleFactor, 0.01).toFixed(2);
+      allPoints[i].price = premium;
+      allPoints[i].pl_dollar = +((premium - entryPremium) * 100).toFixed(0);
+      allPoints[i].pl_pct = entryPremium > 0
+        ? +(((premium - entryPremium) / entryPremium) * 100).toFixed(1)
+        : 0;
+    }
   }
 
   // Force first point to exact entry (avoid rounding drift)
@@ -146,12 +186,6 @@ export function replayContract(
   // Split into same-day and full series
   const sameDayPoints = allPoints.filter((p) => p.dayIndex === 0);
   const toExpirationPoints = allPoints;
-
-  // Compute IV and delta at entry
-  const entryUnderlying = underlyingPrices[0];
-  const entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
-  const totalT = Math.max(totalMinutesRemaining / (252 * 390), 0.0001);
-  const entryDelta = computeDelta(entryUnderlying, strike, totalT, isCall, entryIV);
 
   // Compute metrics
   const metrics = computeMetrics(allPoints, entryPremium, entryIV, entryDelta);
@@ -166,6 +200,13 @@ export function replayContract(
     metrics,
     keyMoments,
   };
+}
+
+/** Compute the expiration date string given entry date and days to expiry. */
+function getExpirationDateStr(entryDate: string, expirationDays: number): string {
+  const d = new Date(entryDate + "T12:00:00Z");
+  d.setDate(d.getDate() + expirationDays);
+  return d.toISOString().slice(0, 10);
 }
 
 // ─── Improved synthetic path ─────────────────────────────────────────

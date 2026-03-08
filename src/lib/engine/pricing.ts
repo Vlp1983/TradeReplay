@@ -151,6 +151,23 @@ function blackScholesPut(
   return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
 }
 
+/**
+ * Pure Black-Scholes price for a call or put.
+ * Used by the replay engine for premium reconstruction from underlying bars.
+ */
+export function blackScholesPrice(
+  S: number,
+  K: number,
+  T: number,
+  isCall: boolean,
+  sigma: number,
+  r: number = 0.05
+): number {
+  return isCall
+    ? blackScholesCall(S, K, T, r, sigma)
+    : blackScholesPut(S, K, T, r, sigma);
+}
+
 // ---------- Path B: delta-momentum approximation ----------
 
 function deltaMomentumPrice(
