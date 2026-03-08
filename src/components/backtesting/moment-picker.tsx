@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import type { Ticker, MomentSelection, Right } from "@/lib/engine/types";
 import {
   ASSET_CLASS_TICKERS,
+  ASSET_CLASS_LABELS,
   TICKER_LABELS,
 } from "@/lib/engine/types";
-import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay } from "@/lib/engine/dates";
+import type { AssetClass } from "@/lib/engine/types";
+import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay, getLastTradingDay } from "@/lib/engine/dates";
 
 interface MomentPickerProps {
   onLoadChain: (selection: MomentSelection) => void;
@@ -18,11 +20,12 @@ interface MomentPickerProps {
 }
 
 export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChange }: MomentPickerProps) {
+  const defaultDate = useMemo(() => getLastTradingDay(), []);
   const [ticker, setTicker] = useState<Ticker | "">("");
-  const [date, setDate] = useState("");
-  const [entryTime, setEntryTime] = useState("");
+  const [date, setDate] = useState(defaultDate);
+  const [entryTime, setEntryTime] = useState("10:00");
 
-  const tickers = ASSET_CLASS_TICKERS.options;
+  const allAssetClasses = Object.keys(ASSET_CLASS_TICKERS) as AssetClass[];
   const tradingDays = useMemo(() => getRecentTradingDays(14), []);
   const timeSlots = useMemo(() => getEntryTimeSlots(), []);
 
@@ -100,10 +103,14 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
               }`}
             >
               <option value="">Choose ticker...</option>
-              {tickers.map((t) => (
-                <option key={t} value={t}>
-                  {TICKER_LABELS[t]}
-                </option>
+              {allAssetClasses.map((ac) => (
+                <optgroup key={ac} label={ASSET_CLASS_LABELS[ac]}>
+                  {ASSET_CLASS_TICKERS[ac].map((t) => (
+                    <option key={t} value={t}>
+                      {TICKER_LABELS[t]}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />

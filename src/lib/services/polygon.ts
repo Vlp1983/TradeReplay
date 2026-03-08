@@ -562,6 +562,51 @@ export async function fetchNormalizedChain(
   return normalized;
 }
 
+// ─── Historical Underlying Price ─────────────────────────────────────
+
+/**
+ * Fetch the closing price of the underlying on a specific historical date.
+ * Uses the daily open/close endpoint for accurate historical pricing.
+ * Falls back to aggregates if open/close fails.
+ */
+export async function getHistoricalPrice(
+  symbol: string,
+  date: string
+): Promise<number | null> {
+  const ticker = symbol.toUpperCase();
+
+  // Try daily open/close endpoint first
+  try {
+    interface DailyOCResponse {
+      close?: number;
+      open?: number;
+      high?: number;
+      low?: number;
+      status?: string;
+    }
+
+    const path = `/v1/open-close/${encodeURIComponent(ticker)}/${date}?adjusted=true`;
+    const data = await polygonFetch<DailyOCResponse>(path);
+    if (data.close && data.close > 0) return data.close;
+    if (data.open && data.open > 0) return data.open;
+  } catch {
+    // Fall through to aggregates
+  }
+
+  // Fallback: use daily aggregates
+  try {
+    const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${date}/${date}?adjusted=true`;
+    const data = await polygonFetch<PolygonAggResponse>(path);
+    if (data.results && data.results.length > 0) {
+      return data.results[0].c; // closing price
+    }
+  } catch {
+    // No data available
+  }
+
+  return null;
+}
+
 // ─── Ticker Details ──────────────────────────────────────────────────
 
 export interface TickerDetails {

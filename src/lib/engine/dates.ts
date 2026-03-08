@@ -58,6 +58,27 @@ export function formatDateDisplay(dateStr: string): string {
 }
 
 /**
+ * Return the most recent trading day (Mon–Fri).
+ * If today is a weekday before market close, returns today.
+ * If today is a weekend, returns the previous Friday.
+ */
+export function getLastTradingDay(): string {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+
+  if (day === 0) {
+    // Sunday → Friday
+    return format(subDays(now, 2), "yyyy-MM-dd");
+  }
+  if (day === 6) {
+    // Saturday → Friday
+    return format(subDays(now, 1), "yyyy-MM-dd");
+  }
+  // Weekday — use today
+  return format(now, "yyyy-MM-dd");
+}
+
+/**
  * Format expiration date label.
  */
 export function getExpirationLabel(

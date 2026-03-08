@@ -2,10 +2,15 @@
  * Generate the full contract replay — price path, P/L series,
  * metrics, and key insights.
  *
+ * Premium reconstruction uses 5 factors at each 5-minute bar:
+ *   1. Delta movement  — ΔS × delta (underlying price change)
+ *   2. Theta decay     — time-based erosion (accelerates near expiry)
+ *   3. Gamma accel     — 0.5 × gamma × ΔS² (convexity adjustment)
+ *   4. Vega / IV noise — small deterministic IV fluctuations
+ *   5. SABR skew       — volatility smile shifts with moneyness
+ *
  * When real Polygon intraday bars are available, uses REAL underlying
- * prices and Black-Scholes to compute option premiums at each bar.
- * The IV is taken from the entry bar and held constant.
- * Falls back to an improved synthetic path with realistic microstructure.
+ * prices. Falls back to improved synthetic path with microstructure.
  */
 
 import type {
@@ -23,6 +28,11 @@ import {
   BASE_VOLATILITY,
   seedFromMoment,
   blackScholesPrice,
+  blackScholesTheta,
+  blackScholesGamma,
+  blackScholesVega,
+  getSABRSkewedIV,
+  getIVNoise,
 } from "./pricing";
 import { getExpirationDays } from "./chain";
 
@@ -51,40 +61,92 @@ export function replayContract(
   const r = 0.05;
   const hasRealData = intradayBars && intradayBars.length >= 5;
 
+  // Seeded PRNG for deterministic IV noise
+  const ivRng = seedFromMoment(ticker, date, entryTime, 99);
+
   let allPoints: TimePoint[];
   let entryIV: number;
   let entryDelta: number;
 
   if (hasRealData) {
-    // ── REAL DATA PATH: Use actual underlying prices + Black-Scholes ──
+    // ── REAL DATA PATH: Use actual underlying prices + 5-factor model ──
     const entryMinutes = parseTimeMinutes(entryTime);
     const filtered = intradayBars.filter(
       (b) => parseTimeMinutes(b.time) >= entryMinutes
     );
     const bars = filtered.length >= 3 ? filtered : intradayBars;
 
-    // Use entry bar IV, held constant throughout
+    // Entry bar: compute initial IV with SABR skew
     const entryUnderlying = bars[0].close;
-    entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
+    const rawIV = getImpliedVol(entryUnderlying, strike, baseVol);
+    entryIV = getSABRSkewedIV(entryUnderlying, strike, computeT(bars[0].time, expirationDays), rawIV, isCall);
 
-    // Compute T in trading time for each bar:
-    // T = (trading minutes remaining until expiration close) / (252 * 390)
-    // For same-day (0DTE): trading minutes = minutes until 16:00 from bar time
-    // For multi-day: add expirationDays * 390 trading minutes
-    const entryBarMinutes = parseTimeMinutes(bars[0].time);
-    const entryTradingMinLeft = Math.max(960 - entryBarMinutes, 1) + expirationDays * 390;
-    const entryT = Math.max(entryTradingMinLeft / (252 * 390), 0.0001);
+    // Entry T and delta
+    const entryT = computeT(bars[0].time, expirationDays);
     entryDelta = computeDelta(entryUnderlying, strike, entryT, isCall, entryIV, r);
 
+    // Compute entry premium via full BS
+    const entryBSPremium = blackScholesPrice(entryUnderlying, strike, entryT, isCall, entryIV, r);
+
     allPoints = [];
+    let prevPremium = entryBSPremium;
+    let prevS = entryUnderlying;
+    let currentIV = entryIV;
+
     for (let i = 0; i < bars.length; i++) {
       const S = bars[i].close;
-      // Trading minutes remaining from this bar to expiration close
-      const barMinutes = parseTimeMinutes(bars[i].time);
-      const tradingMinLeft = Math.max(960 - barMinutes, 1) + expirationDays * 390;
-      const T = Math.max(tradingMinLeft / (252 * 390), 0.0001);
+      const T = computeT(bars[i].time, expirationDays);
 
-      let premium = blackScholesPrice(S, strike, T, isCall, entryIV, r);
+      if (i === 0) {
+        // Entry point — use full BS price
+        prevPremium = entryBSPremium;
+        prevS = S;
+        allPoints.push({
+          time: bars[i].time,
+          label: bars[i].label,
+          price: +Math.max(entryBSPremium, 0.01).toFixed(2),
+          pl_dollar: 0,
+          pl_pct: 0,
+          dayIndex: 0,
+        });
+        continue;
+      }
+
+      // ── Factor 1: Delta movement ─────────────────────────────
+      const delta = computeDelta(prevS, strike, T, isCall, currentIV, r);
+      const deltaS = S - prevS;
+      const deltaPnL = delta * deltaS;
+
+      // ── Factor 2: Theta decay ────────────────────────────────
+      // Time elapsed = 5 minutes = 5/(390*252) years
+      const theta = blackScholesTheta(prevS, strike, T, isCall, currentIV, r);
+      const thetaPnL = theta * (5 / (60 * 24)); // theta is per calendar day, 5 min fraction
+
+      // ── Factor 3: Gamma acceleration ─────────────────────────
+      const gamma = blackScholesGamma(prevS, strike, T, currentIV, r);
+      const gammaPnL = 0.5 * gamma * deltaS * deltaS;
+
+      // ── Factor 4: Vega / IV noise ───────────────────────────
+      const ivNoiseMult = getIVNoise(ivRng, i, 0.015);
+      const newIV = currentIV * ivNoiseMult;
+      const vega = blackScholesVega(prevS, strike, T, currentIV, r);
+      const ivChange = (newIV - currentIV) * 100; // vega is per 1% change
+      const vegaPnL = vega * ivChange;
+
+      // ── Factor 5: SABR skew adjustment ──────────────────────
+      // Re-compute skewed IV at the new spot and time
+      const sabrIV = getSABRSkewedIV(S, strike, T, baseVol, isCall);
+      // Blend: 80% previous IV path + 20% SABR recalculation
+      currentIV = 0.8 * newIV + 0.2 * sabrIV;
+
+      // ── Combine all factors ─────────────────────────────────
+      let premium = prevPremium + deltaPnL + thetaPnL + gammaPnL + vegaPnL;
+
+      // Sanity: re-anchor to full BS every 12 bars (~1 hour) to prevent drift
+      if (i % 12 === 0) {
+        const bsFull = blackScholesPrice(S, strike, T, isCall, currentIV, r);
+        premium = 0.7 * premium + 0.3 * bsFull; // soft anchor
+      }
 
       // Last bar for 0DTE: use intrinsic value
       if (i === bars.length - 1 && expirationDays === 0) {
@@ -93,19 +155,22 @@ export function replayContract(
           : Math.max(strike - S, 0);
       }
 
-      premium = +Math.max(premium, 0.01).toFixed(2);
+      premium = Math.max(premium, 0.01);
 
       allPoints.push({
         time: bars[i].time,
         label: bars[i].label,
-        price: premium,
+        price: +premium.toFixed(2),
         pl_dollar: 0,
         pl_pct: 0,
         dayIndex: 0,
       });
+
+      prevPremium = premium;
+      prevS = S;
     }
   } else {
-    // ── SYNTHETIC PATH: Generate realistic underlying + BS pricing ──
+    // ── SYNTHETIC PATH: Generate realistic underlying + 5-factor pricing ──
     const path = generateRealisticPath(
       ticker, date, entryTime, expirationDays, baseVol
     );
@@ -115,18 +180,71 @@ export function replayContract(
       : expirationDays * 390 + minutesUntilClose(entryTime);
 
     const entryUnderlying = path.prices[0];
-    entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
-    const totalT = Math.max(totalMinutesRemaining / (252 * 390), 0.0001);
-    entryDelta = computeDelta(entryUnderlying, strike, totalT, isCall, entryIV, r);
+    const rawIV = getImpliedVol(entryUnderlying, strike, baseVol);
+    const entryT = Math.max(totalMinutesRemaining / (252 * 390), 0.0001);
+    entryIV = getSABRSkewedIV(entryUnderlying, strike, entryT, rawIV, isCall);
+    entryDelta = computeDelta(entryUnderlying, strike, entryT, isCall, entryIV, r);
+
+    const entryBSPremium = blackScholesPrice(entryUnderlying, strike, entryT, isCall, entryIV, r);
 
     allPoints = [];
+    let prevPremium = entryBSPremium;
+    let prevS = entryUnderlying;
+    let currentIV = entryIV;
+
     for (let i = 0; i < path.prices.length; i++) {
       const S = path.prices[i];
       const fraction = i / Math.max(path.prices.length - 1, 1);
       const minutesLeft = totalMinutesRemaining * (1 - fraction);
       const T = Math.max(minutesLeft / (252 * 390), 0.0001);
 
-      let premium = blackScholesPrice(S, strike, T, isCall, entryIV, r);
+      if (i === 0) {
+        prevPremium = entryBSPremium;
+        prevS = S;
+        allPoints.push({
+          time: path.times[i],
+          label: path.labels[i],
+          price: +Math.max(entryBSPremium, 0.01).toFixed(2),
+          pl_dollar: 0,
+          pl_pct: 0,
+          dayIndex: path.dayIndices[i],
+        });
+        continue;
+      }
+
+      // ── Factor 1: Delta ──
+      const delta = computeDelta(prevS, strike, T, isCall, currentIV, r);
+      const deltaS = S - prevS;
+      const deltaPnL = delta * deltaS;
+
+      // ── Factor 2: Theta ──
+      const theta = blackScholesTheta(prevS, strike, T, isCall, currentIV, r);
+      const stepMinutes = totalMinutesRemaining / Math.max(path.prices.length - 1, 1);
+      const thetaPnL = theta * (stepMinutes / (60 * 24));
+
+      // ── Factor 3: Gamma ──
+      const gamma = blackScholesGamma(prevS, strike, T, currentIV, r);
+      const gammaPnL = 0.5 * gamma * deltaS * deltaS;
+
+      // ── Factor 4: Vega / IV noise ──
+      const ivNoiseMult = getIVNoise(ivRng, i, 0.015);
+      const newIV = currentIV * ivNoiseMult;
+      const vega = blackScholesVega(prevS, strike, T, currentIV, r);
+      const ivChange = (newIV - currentIV) * 100;
+      const vegaPnL = vega * ivChange;
+
+      // ── Factor 5: SABR skew ──
+      const sabrIV = getSABRSkewedIV(S, strike, T, baseVol, isCall);
+      currentIV = 0.8 * newIV + 0.2 * sabrIV;
+
+      // ── Combine ──
+      let premium = prevPremium + deltaPnL + thetaPnL + gammaPnL + vegaPnL;
+
+      // Soft re-anchor every ~1 hour equivalent
+      if (i % 12 === 0) {
+        const bsFull = blackScholesPrice(S, strike, T, isCall, currentIV, r);
+        premium = 0.7 * premium + 0.3 * bsFull;
+      }
 
       if (i === path.prices.length - 1 && expirationDays === 0) {
         premium = isCall
@@ -134,47 +252,38 @@ export function replayContract(
           : Math.max(strike - S, 0);
       }
 
-      premium = +Math.max(premium, 0.01).toFixed(2);
+      premium = Math.max(premium, 0.01);
 
       allPoints.push({
         time: path.times[i],
         label: path.labels[i],
-        price: premium,
+        price: +premium.toFixed(2),
         pl_dollar: 0,
         pl_pct: 0,
         dayIndex: path.dayIndices[i],
       });
+
+      prevPremium = premium;
+      prevS = S;
     }
   }
 
   // ── Anchor to real or BS entry premium ────────────────────────────
-  // The BS curve gives us the intraday shape. We use the raw BS premium
-  // at entry as the reference for P/L, since the chain's market premium
-  // from Polygon may not match the model (stale data, illiquid options).
-  //
-  // However, if the contract has a real entry premium from a live market
-  // source (mid or last), and it's a reasonable option premium (not the
-  // underlying price), we anchor to it by scaling the BS curve.
   const bsEntry = allPoints[0]?.price ?? 0.01;
   const chainPremium = contract.entryPremium;
 
-  // Use real chain premium if it looks like a valid option price:
-  // - Must be > 0.01 (not the $0.01 fallback)
-  // - Must not be close to the underlying price (not the stock price)
-  // - Ratio to BS entry should be within 0.2x to 5x (reasonable disagreement)
+  // Use real chain premium if it looks like a valid option price
   const chainLooksValid = chainPremium > 0.02
     && (bsEntry > 0.01 ? (chainPremium / bsEntry) < 5 && (chainPremium / bsEntry) > 0.2 : true);
 
   let entryPremium: number;
   if (chainLooksValid && chainPremium > 0.02) {
-    // Anchor to the real market premium, scale BS curve to match
     entryPremium = chainPremium;
     const scaleFactor = bsEntry > 0.01 ? chainPremium / bsEntry : 1;
     for (const pt of allPoints) {
       pt.price = +Math.max(pt.price * scaleFactor, 0.01).toFixed(2);
     }
   } else {
-    // Use raw BS premiums (no scaling)
     entryPremium = bsEntry;
   }
 
@@ -213,6 +322,18 @@ export function replayContract(
   };
 }
 
+// ─── T calculation helper ────────────────────────────────────────────
+
+/**
+ * Compute T (time to expiration in years) for a given bar time.
+ * Uses trading time: T = tradingMinutesRemaining / (252 * 390)
+ */
+function computeT(barTime: string, expirationDays: number): number {
+  const barMinutes = parseTimeMinutes(barTime);
+  const tradingMinLeft = Math.max(960 - barMinutes, 1) + expirationDays * 390;
+  return Math.max(tradingMinLeft / (252 * 390), 0.0001);
+}
+
 // ─── Improved synthetic path ─────────────────────────────────────────
 
 /**
@@ -233,7 +354,7 @@ function generateRealisticPath(
   const basePrice = getUnderlyingPrice(ticker, date, entryTime);
 
   const rng = seedFromMoment(ticker, date, entryTime, 77);
-  const dt = 5 / (252 * 390); // 5-minute steps (more granular than 15m)
+  const dt = 5 / (252 * 390); // 5-minute steps
 
   const times: string[] = [];
   const labels: string[] = [];

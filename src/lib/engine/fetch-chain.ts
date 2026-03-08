@@ -142,6 +142,8 @@ export interface LiveChainResult {
   chain: ChainData;
   availableExpirations: string[];
   source: "polygon" | "synthetic";
+  /** Historical underlying price on the selected date (null if unavailable) */
+  historicalPrice: number | null;
 }
 
 /**
@@ -220,7 +222,7 @@ export async function fetchLiveChain(
       availableExpirations: availableExps,
     };
 
-    return { chain, availableExpirations: availableExps, source: "polygon" };
+    return { chain, availableExpirations: availableExps, source: "polygon", historicalPrice: null };
   } catch (err) {
     // Fall back to synthetic
     console.warn(
@@ -228,7 +230,43 @@ export async function fetchLiveChain(
       err
     );
     const chain = generateChain(ticker, date, entryTime, expiration);
-    return { chain, availableExpirations: [], source: "synthetic" };
+    return { chain, availableExpirations: [], source: "synthetic", historicalPrice: null };
+  }
+}
+
+// ─── Historical underlying price ──────────────────────────────────────
+
+export interface HistoricalPriceResult {
+  price: number | null;
+  source: "polygon" | "none";
+}
+
+/**
+ * Fetch the historical closing price of the underlying on a specific date.
+ * Used to determine correct ATM strike for historical backtests.
+ */
+export async function fetchHistoricalPrice(
+  ticker: Ticker,
+  date: string
+): Promise<HistoricalPriceResult> {
+  try {
+    const symbol = polygonSymbol(ticker);
+    const res = await fetch(
+      `/api/historical-price?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`
+    );
+    if (!res.ok) throw new Error(`API ${res.status}`);
+
+    const data = await res.json();
+    if (data.price && data.price > 0) {
+      return { price: data.price, source: "polygon" };
+    }
+    throw new Error("No price in response");
+  } catch (err) {
+    console.warn(
+      `[fetchHistoricalPrice] Failed for ${ticker} on ${date}:`,
+      err
+    );
+    return { price: null, source: "none" };
   }
 }
 

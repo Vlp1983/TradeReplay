@@ -186,6 +186,156 @@ export function blackScholesDelta(
   return isCall ? normalCDF(d1) : normalCDF(d1) - 1;
 }
 
+// ---------- Black-Scholes Greeks ----------
+
+/**
+ * Black-Scholes theta (per calendar day, not annualized).
+ * Returns a negative number for long options (time decay).
+ */
+export function blackScholesTheta(
+  S: number,
+  K: number,
+  T: number,
+  isCall: boolean,
+  sigma: number,
+  r: number = 0.05
+): number {
+  if (T <= 0 || sigma <= 0) return 0;
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  const nd1 = normalPDF(d1);
+
+  // First term: always negative (time decay of optionality)
+  const term1 = -(S * nd1 * sigma) / (2 * sqrtT);
+
+  if (isCall) {
+    // Call theta = term1 - r*K*e^(-rT)*N(d2)
+    return (term1 - r * K * Math.exp(-r * T) * normalCDF(d2)) / 365;
+  } else {
+    // Put theta = term1 + r*K*e^(-rT)*N(-d2)
+    return (term1 + r * K * Math.exp(-r * T) * normalCDF(-d2)) / 365;
+  }
+}
+
+/**
+ * Black-Scholes gamma (same for calls and puts).
+ * Measures rate of change of delta w.r.t. underlying price.
+ */
+export function blackScholesGamma(
+  S: number,
+  K: number,
+  T: number,
+  sigma: number,
+  r: number = 0.05
+): number {
+  if (T <= 0 || sigma <= 0 || S <= 0) return 0;
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  return normalPDF(d1) / (S * sigma * sqrtT);
+}
+
+/**
+ * Black-Scholes vega (per 1% change in IV).
+ * Same for calls and puts. Returns dollar change per 0.01 IV move.
+ */
+export function blackScholesVega(
+  S: number,
+  K: number,
+  T: number,
+  sigma: number,
+  r: number = 0.05
+): number {
+  if (T <= 0 || sigma <= 0) return 0;
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  return S * normalPDF(d1) * sqrtT * 0.01; // per 1% IV change
+}
+
+/** Standard normal PDF. */
+function normalPDF(x: number): number {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+
+// ---------- SABR volatility skew ----------
+
+/**
+ * Approximate SABR-inspired volatility skew/smile.
+ *
+ * Models three effects:
+ *   1. OTM skew: puts get higher IV, calls get slightly lower
+ *   2. Smile: deep OTM options in either direction get elevated IV
+ *   3. Term structure: shorter-dated options have steeper skew
+ *
+ * @param S         - Spot price
+ * @param K         - Strike price
+ * @param T         - Time to expiry (years)
+ * @param baseIV    - ATM implied volatility
+ * @param isCall    - true for call, false for put
+ * @returns Skew-adjusted IV
+ */
+export function getSABRSkewedIV(
+  S: number,
+  K: number,
+  T: number,
+  baseIV: number,
+  isCall: boolean
+): number {
+  if (S <= 0 || K <= 0 || T <= 0) return baseIV;
+
+  const logMoneyness = Math.log(K / S); // negative for ITM calls / OTM puts
+  const absMoneyness = Math.abs(logMoneyness);
+
+  // 1. Skew: OTM puts get ~2-4% higher IV per 1% OTM, calls slightly lower
+  //    This models the "volatility smirk" seen in equity options
+  const skewStrength = 0.15 / Math.max(Math.sqrt(T), 0.1); // steeper for short-dated
+  const skew = -logMoneyness * skewStrength * baseIV; // positive for OTM puts (K < S)
+
+  // 2. Smile: deep OTM in either direction gets higher IV
+  const smileStrength = 0.5;
+  const smile = absMoneyness * absMoneyness * smileStrength * baseIV;
+
+  // 3. Term structure dampening: longer-dated options converge to ATM IV
+  const termDamp = Math.min(1, 0.3 / Math.max(T, 0.001));
+
+  const adjustedIV = baseIV + (skew + smile) * termDamp;
+
+  // Clamp to reasonable range: 50% to 300% of base IV
+  return Math.max(baseIV * 0.5, Math.min(baseIV * 3.0, adjustedIV));
+}
+
+// ---------- Deterministic IV noise ----------
+
+/**
+ * Generate a small, deterministic IV perturbation for a specific bar.
+ * Models intraday IV fluctuation (mean-reverting around base).
+ *
+ * @param rng       - Seeded PRNG function
+ * @param baseIV    - Current implied volatility
+ * @param barIndex  - Index of the current bar (for autocorrelation)
+ * @returns IV noise as a multiplier (e.g., 0.97 to 1.03)
+ */
+export function getIVNoise(
+  rng: () => number,
+  barIndex: number,
+  amplitude: number = 0.02
+): number {
+  // Generate two uniform randoms → Box-Muller for normal
+  const u1 = Math.max(rng(), 1e-10);
+  const u2 = rng();
+  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+
+  // Autocorrelation: each bar's noise is partially inherited from previous
+  // This prevents unrealistic IV jumps between adjacent bars
+  const decay = 0.85; // mean-reversion speed
+  const innovation = z * amplitude;
+
+  // Simple AR(1)-like noise: dampened random walk
+  // The barIndex creates a deterministic "path" effect
+  const phase = Math.sin(barIndex * 0.3) * amplitude * 0.5;
+  return 1 + innovation * (1 - decay) + phase;
+}
+
 // ---------- consensus pricing (uses pure BS) ----------
 
 export interface PriceEstimate {
