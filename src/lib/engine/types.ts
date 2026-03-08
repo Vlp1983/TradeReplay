@@ -103,6 +103,7 @@ export interface TimePoint {
 
 export interface ReplayMetrics {
   entryPremium: number;
+  exitPremium: number;          // per-share premium at close
   exitAtClosePL: number;        // $ per contract
   exitAtClosePLPct: number;     // %
   maxProfit: number;            // MFE in $
@@ -114,6 +115,10 @@ export interface ReplayMetrics {
   optimalExitTime: string;
   optimalExitPL: number;
   optimalExitPLPct: number;
+  optimalExitPremium: number;   // per-share premium at optimal exit
+  optimalExitReason: string;    // why this was the optimal exit
+  ivAtEntry: number;            // implied volatility at entry (0-1 scale)
+  deltaAtEntry: number;         // option delta at entry
 }
 
 export interface KeyMoment {

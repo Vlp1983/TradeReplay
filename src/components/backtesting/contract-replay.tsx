@@ -111,7 +111,7 @@ export function ContractReplay({
 
       {/* Summary cards */}
       <div className="mb-5">
-        <SummaryCards metrics={metrics} />
+        <SummaryCards metrics={metrics} right={contract.right} />
       </div>
 
       {/* Chart */}

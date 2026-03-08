@@ -215,6 +215,36 @@ export function getImpliedVol(
   return baseVol * (1 + moneyness * 3);
 }
 
+// ---------- delta calculation ----------
+
+export function computeDelta(
+  S: number,
+  K: number,
+  T: number,
+  isCall: boolean,
+  sigma: number = 0.25,
+  r: number = 0.05
+): number {
+  if (T <= 0) return isCall ? (S > K ? 1 : 0) : (S < K ? -1 : 0);
+  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T));
+  return isCall ? normalCDF(d1) : normalCDF(d1) - 1;
+}
+
+// ---------- dual price formatting ----------
+
+/** Format a price showing both per-share and per-contract (100x) values. */
+export function formatDualPrice(perShare: number): string {
+  const perContract = perShare * 100;
+  return `$${Math.abs(perShare).toFixed(2)} per share · $${Math.abs(perContract).toFixed(2)} per contract`;
+}
+
+/** Format a signed P/L showing both per-share and per-contract values. */
+export function formatDualPL(perContract: number): string {
+  const perShare = perContract / 100;
+  const sign = perContract >= 0 ? "+" : "-";
+  return `${sign}$${Math.abs(perShare).toFixed(2)} per share / ${sign}$${Math.abs(perContract).toFixed(2)} per contract`;
+}
+
 // ---------- generate underlying path (GBM) ----------
 
 export interface PricePath {

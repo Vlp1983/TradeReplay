@@ -19,6 +19,7 @@ import {
   getUnderlyingPrice,
   estimatePremium,
   getImpliedVol,
+  computeDelta,
   BASE_VOLATILITY,
   seedFromMoment,
 } from "./pricing";
@@ -146,8 +147,14 @@ export function replayContract(
   const sameDayPoints = allPoints.filter((p) => p.dayIndex === 0);
   const toExpirationPoints = allPoints;
 
+  // Compute IV and delta at entry
+  const entryUnderlying = underlyingPrices[0];
+  const entryIV = getImpliedVol(entryUnderlying, strike, baseVol);
+  const totalT = Math.max(totalMinutesRemaining / (252 * 390), 0.0001);
+  const entryDelta = computeDelta(entryUnderlying, strike, totalT, isCall, entryIV);
+
   // Compute metrics
-  const metrics = computeMetrics(allPoints, entryPremium);
+  const metrics = computeMetrics(allPoints, entryPremium, entryIV, entryDelta);
 
   // Generate trade insights (key moments in price action)
   const keyMoments = detectTradeInsights(allPoints, sameDayPoints, entryPremium);
@@ -295,7 +302,9 @@ function minutesUntilClose(entryTime: string): number {
 
 function computeMetrics(
   points: TimePoint[],
-  entryPremium: number
+  entryPremium: number,
+  ivAtEntry: number,
+  deltaAtEntry: number
 ): ReplayMetrics {
   let maxProfitPt = points[0];
   let maxDrawdownPt = points[0];
@@ -309,10 +318,12 @@ function computeMetrics(
 
   // Optimal exit: first point with >= 50% gain, OR peak before -30% retrace
   let optimalPt = lastPoint;
+  let optimalReason = "held to close";
   let peak = points[0];
   for (const pt of points) {
     if (pt.pl_pct >= 50) {
       optimalPt = pt;
+      optimalReason = "hit +50% profit target";
       break;
     }
     if (pt.pl_dollar > peak.pl_dollar) {
@@ -320,12 +331,14 @@ function computeMetrics(
     }
     if (peak.pl_pct > 10 && pt.pl_pct < peak.pl_pct - 30) {
       optimalPt = peak;
+      optimalReason = "peak before 30% retrace";
       break;
     }
   }
 
   return {
     entryPremium,
+    exitPremium: lastPoint.price,
     exitAtClosePL: lastPoint.pl_dollar,
     exitAtClosePLPct: lastPoint.pl_pct,
     maxProfit: maxProfitPt.pl_dollar,
@@ -337,6 +350,10 @@ function computeMetrics(
     optimalExitTime: optimalPt.label,
     optimalExitPL: optimalPt.pl_dollar,
     optimalExitPLPct: optimalPt.pl_pct,
+    optimalExitPremium: optimalPt.price,
+    optimalExitReason: optimalReason,
+    ivAtEntry,
+    deltaAtEntry,
   };
 }
 
@@ -355,7 +372,7 @@ function detectTradeInsights(
   moments.push({
     time: pts[0].label,
     label: "Entry",
-    reason: `Entered at $${entryPremium.toFixed(2)} premium.`,
+    reason: `Entered at $${entryPremium.toFixed(2)} per share · $${(entryPremium * 100).toFixed(2)} per contract.`,
     type: "trade",
   });
 
@@ -385,7 +402,7 @@ function detectTradeInsights(
     moments.push({
       time: pts[peakIdx].label,
       label: "Peak profit (MFE)",
-      reason: `Max favorable excursion: +${pts[peakIdx].pl_pct.toFixed(0)}% ($${pts[peakIdx].pl_dollar}).`,
+      reason: `Max favorable excursion: +${pts[peakIdx].pl_pct.toFixed(0)}% — $${(pts[peakIdx].pl_dollar / 100).toFixed(2)} per share · $${pts[peakIdx].pl_dollar.toFixed(2)} per contract.`,
       type: "trade",
     });
   }
@@ -395,7 +412,7 @@ function detectTradeInsights(
     moments.push({
       time: pts[troughIdx].label,
       label: "Max drawdown (MAE)",
-      reason: `Max adverse excursion: ${pts[troughIdx].pl_pct.toFixed(0)}% ($${pts[troughIdx].pl_dollar}).`,
+      reason: `Max adverse excursion: ${pts[troughIdx].pl_pct.toFixed(0)}% — $${(pts[troughIdx].pl_dollar / 100).toFixed(2)} per share · $${pts[troughIdx].pl_dollar.toFixed(2)} per contract.`,
       type: "trade",
     });
   }
@@ -412,7 +429,7 @@ function detectTradeInsights(
         moments.push({
           time: pts[i].label,
           label: "Support held",
-          reason: `Price bounced from $${pts[i].price.toFixed(2)} — potential support level in underlying.`,
+          reason: `Price bounced from $${pts[i].price.toFixed(2)} per share · $${(pts[i].price * 100).toFixed(2)} per contract — potential support level in underlying.`,
           type: "trade",
         });
       }
@@ -423,7 +440,7 @@ function detectTradeInsights(
         moments.push({
           time: pts[i].label,
           label: "Resistance hit",
-          reason: `Premium peaked at $${pts[i].price.toFixed(2)} before pulling back — possible resistance in underlying.`,
+          reason: `Premium peaked at $${pts[i].price.toFixed(2)} per share · $${(pts[i].price * 100).toFixed(2)} per contract before pulling back — possible resistance in underlying.`,
           type: "trade",
         });
       }
@@ -440,7 +457,7 @@ function detectTradeInsights(
         moments.push({
           time: day2Open.label,
           label: "Theta decay overnight",
-          reason: `Premium dropped $${Math.abs(overnight)} overnight due to time decay.`,
+          reason: `Premium dropped $${(Math.abs(overnight) / 100).toFixed(2)} per share · $${Math.abs(overnight).toFixed(2)} per contract overnight due to time decay.`,
           type: "trade",
         });
       }
@@ -452,7 +469,7 @@ function detectTradeInsights(
   moments.push({
     time: last.label,
     label: last.pl_pct >= 0 ? "Profitable close" : "Loss at close",
-    reason: `Closed at ${last.pl_pct >= 0 ? "+" : ""}${last.pl_pct.toFixed(0)}% ($${last.pl_dollar}).`,
+    reason: `Closed at ${last.pl_pct >= 0 ? "+" : ""}${last.pl_pct.toFixed(0)}% — $${(last.pl_dollar / 100).toFixed(2)} per share · $${last.pl_dollar.toFixed(2)} per contract.`,
     type: "trade",
   });
 

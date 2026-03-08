@@ -164,7 +164,7 @@ export function ChainSnapshot({
                 {chain.ticker} {fmtStrike(selectedStrike!)}
                 {selectedRight === "call" ? "C" : "P"}
               </span>{" "}
-              &mdash; ${selectedRow.premium.toFixed(2)}{" "}
+              &mdash; ${selectedRow.premium.toFixed(2)} per share · ${(selectedRow.premium * 100).toFixed(2)} per contract{" "}
               <span className="text-text-muted">
                 ({getExpirationLabel(chain.date, chain.expiration)})
               </span>
@@ -219,7 +219,7 @@ function ChainTable({
             <tr className="border-b border-border bg-bg">
               <th className="px-3 py-2 font-medium text-text-muted">Strike</th>
               <th className="px-3 py-2 font-medium text-text-muted">
-                Est. Premium
+                Est. Premium (per share · per contract)
               </th>
             </tr>
           </thead>
@@ -247,7 +247,10 @@ function ChainTable({
                     )}
                   </td>
                   <td className="px-3 py-2.5 font-mono text-text-secondary">
-                    ${row.premium.toFixed(2)}
+                    <span>${row.premium.toFixed(2)}</span>
+                    <span className="ml-1.5 text-[11px] text-text-muted">
+                      · ${(row.premium * 100).toFixed(2)}/ct
+                    </span>
                   </td>
                 </tr>
               );
