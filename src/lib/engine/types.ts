@@ -139,6 +139,9 @@ export interface ReplayMetrics {
   optimalExitReason: string;    // why this was the optimal exit
   ivAtEntry: number;            // implied volatility at entry (0-1 scale)
   deltaAtEntry: number;         // option delta at entry
+  gammaAtEntry: number;         // option gamma at entry
+  thetaAtEntry: number;         // option theta at entry (per day)
+  vegaAtEntry: number;          // option vega at entry (per 1% IV)
 }
 
 export interface KeyMoment {

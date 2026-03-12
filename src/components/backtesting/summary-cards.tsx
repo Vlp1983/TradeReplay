@@ -62,8 +62,8 @@ export function SummaryCards({ metrics, right }: SummaryCardsProps) {
       value: `${(metrics.ivAtEntry * 100).toFixed(0)}%`,
     },
     {
-      label: "Delta at Entry",
-      value: metrics.deltaAtEntry.toFixed(2),
+      label: "Greeks at Entry",
+      value: `\u0394 ${metrics.deltaAtEntry.toFixed(2)}  \u0393 ${metrics.gammaAtEntry.toFixed(4)}  \u0398 ${metrics.thetaAtEntry.toFixed(2)}  \u03BD ${metrics.vegaAtEntry.toFixed(3)}`,
     },
   ];
 

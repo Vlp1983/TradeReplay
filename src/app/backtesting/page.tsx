@@ -18,9 +18,14 @@ import type {
   ReplayResult,
   Right,
 } from "@/lib/engine/types";
-import type { IntradayBar } from "@/lib/services/polygon";
-import { fetchLiveChain, fetchIntradayPrices, fetchInsights, defaultExpiration } from "@/lib/engine/fetch-chain";
-import { replayContract } from "@/lib/engine/replay";
+import type { OptionPricingResult } from "@/lib/pricing/types";
+import {
+  fetchPricing,
+  resolveDefaultExpiry,
+  pricingToChainData,
+  pricingToReplayResult,
+  fetchInsights,
+} from "@/lib/engine/fetch-chain";
 
 type Step = "moment" | "chain" | "replay";
 
@@ -31,44 +36,80 @@ export default function BacktestingPage() {
   const [loadingChain, setLoadingChain] = useState(false);
   const [loadingReplay, setLoadingReplay] = useState(false);
   const [moment, setMoment] = useState<MomentSelection | null>(null);
-  const [dataSource, setDataSource] = useState<"polygon" | "synthetic">("synthetic");
-  const [intradayBars, setIntradayBars] = useState<IntradayBar[]>([]);
   const [selectedRight, setSelectedRight] = useState<Right>("call");
   const [showPaywall, setShowPaywall] = useState(false);
+  // Cache the latest pricing result for re-use when toggling right / picking strikes
+  const [lastPricing, setLastPricing] = useState<OptionPricingResult | null>(null);
+  const [currentExpiry, setCurrentExpiry] = useState<Date | null>(null);
 
   const { checkAndIncrement, isLimitReached, limitReason } = useGate();
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
 
-  /** Run replay and fetch AI insights for a contract */
-  const runReplayWithInsights = useCallback(
-    async (contract: SelectedContract, bars: IntradayBar[]) => {
-      // Run replay synchronously with real data
-      const result = replayContract(contract, bars.length > 0 ? bars : undefined);
+  /** Run the pricing engine and display results */
+  const runPricingAndDisplay = useCallback(
+    async (
+      ticker: string,
+      date: string,
+      entryTime: string,
+      strike: number,
+      expiry: Date,
+      right: Right
+    ) => {
+      const optionType = right;
+
+      const pricing = await fetchPricing({
+        ticker,
+        replayDate: date,
+        strike,
+        expiry,
+        optionType,
+      });
+
+      setLastPricing(pricing);
+
+      // Build chain data for the strike picker
+      const spot = pricing.bars.length > 0 ? pricing.bars[0].open / Math.max(0.01, Math.abs(pricing.greeksAtOpen.delta)) : 100;
+      const chain = pricingToChainData(
+        ticker as MomentSelection["ticker"],
+        date,
+        entryTime,
+        pricing,
+        pricing.strikeChain.atmStrike // use ATM as underlying proxy
+      );
+      setChainData(chain);
+
+      // Build contract for replay
+      const atmPremium = pricing.bars.length > 0 ? pricing.bars[0].open : 1.0;
+      const contract: SelectedContract = {
+        ticker: ticker as MomentSelection["ticker"],
+        date,
+        entryTime,
+        expiration: pricing.classification.dteBucket === "0DTE" ? "0dte" : "friday",
+        strike,
+        right,
+        entryPremium: +atmPremium.toFixed(2),
+        confidence: "Med",
+      };
+
+      const result = pricingToReplayResult(contract, pricing);
       setReplayResult(result);
       setStep("replay");
-      setLoadingReplay(false);
 
       setTimeout(() => {
-        replayRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+        replayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 100);
 
-      // Fetch AI insights asynchronously (non-blocking)
-      const underlyingPrices = bars.length > 0
-        ? bars.map((b) => b.close)
-        : result.sameDayPoints.map((p) => p.price);
-
+      // Fetch AI insights asynchronously
+      const prices = result.sameDayPoints.map((p) => p.price);
       try {
         const insightsResult = await fetchInsights({
-          ticker: contract.ticker,
-          date: contract.date,
-          entryTime: contract.entryTime,
-          strike: contract.strike,
-          right: contract.right,
+          ticker,
+          date,
+          entryTime,
+          strike,
+          right,
           entryPremium: contract.entryPremium,
           exitPL: result.metrics.exitAtClosePL,
           exitPLPct: result.metrics.exitAtClosePLPct,
@@ -77,10 +118,10 @@ export default function BacktestingPage() {
           maxProfitTime: result.metrics.maxProfitTime,
           maxDrawdown: result.metrics.maxDrawdown,
           maxDrawdownPct: result.metrics.maxDrawdownPct,
-          underlyingStart: underlyingPrices[0] ?? 0,
-          underlyingEnd: underlyingPrices[underlyingPrices.length - 1] ?? 0,
-          underlyingHigh: Math.max(...underlyingPrices),
-          underlyingLow: Math.min(...underlyingPrices),
+          underlyingStart: prices[0] ?? 0,
+          underlyingEnd: prices[prices.length - 1] ?? 0,
+          underlyingHigh: prices.length > 0 ? Math.max(...prices) : 0,
+          underlyingLow: prices.length > 0 ? Math.min(...prices) : 0,
         });
 
         if (insightsResult.insights.length > 0) {
@@ -89,38 +130,13 @@ export default function BacktestingPage() {
           );
         }
       } catch {
-        // Insights are non-critical — replay still works without them
+        // non-critical
       }
     },
     []
   );
 
-  /** Replay an ATM contract for a given right (call or put) using current chain */
-  const replayAtm = useCallback(
-    (chain: ChainData, right: Right, bars: IntradayBar[]) => {
-      const rows = right === "call" ? chain.calls : chain.puts;
-      const atmRow = rows.find((r) => r.isATM);
-      if (!atmRow) return;
-
-      const atmContract: SelectedContract = {
-        ticker: chain.ticker,
-        date: chain.date,
-        entryTime: chain.entryTime,
-        expiration: chain.expiration,
-        strike: atmRow.strike,
-        right,
-        entryPremium: atmRow.premium,
-        confidence: atmRow.confidence,
-      };
-
-      setLoadingReplay(true);
-      setTimeout(() => {
-        runReplayWithInsights(atmContract, bars);
-      }, 300);
-    },
-    [runReplayWithInsights]
-  );
-
+  /** Initial load: fetch pricing for ATM call at default expiry */
   const handleLoadChain = useCallback(
     async (selection: MomentSelection) => {
       if (!checkAndIncrement()) {
@@ -132,61 +148,125 @@ export default function BacktestingPage() {
       setLoadingChain(true);
       setReplayResult(null);
 
-      // Fetch chain and intraday data in parallel
-      const [chainResult, intradayResult] = await Promise.all([
-        fetchLiveChain(selection.ticker, selection.date, selection.entryTime, defaultExpiration(selection.ticker)),
-        fetchIntradayPrices(selection.ticker, selection.date),
-      ]);
+      try {
+        const expiry = resolveDefaultExpiry(selection.date);
+        setCurrentExpiry(expiry);
 
-      setChainData(chainResult.chain);
-      setDataSource(chainResult.source);
-      setIntradayBars(intradayResult.bars);
-      setLoadingChain(false);
+        // First call: get pricing for ATM strike (use 0 as placeholder, engine will snap)
+        // We need the ATM strike first — fetch a quick pricing to get strikeChain
+        const initPricing = await fetchPricing({
+          ticker: selection.ticker,
+          replayDate: selection.date,
+          strike: 0, // will be resolved to ATM by the engine's fallback
+          expiry,
+          optionType: selectedRight,
+        });
 
-      // Auto-replay ATM contract with the selected direction
-      replayAtm(chainResult.chain, selectedRight, intradayResult.bars);
+        const atmStrike = initPricing.strikeChain.atmStrike;
+        setLastPricing(initPricing);
+        setCurrentExpiry(expiry);
+
+        // Now fetch the real ATM pricing
+        await runPricingAndDisplay(
+          selection.ticker,
+          selection.date,
+          selection.entryTime,
+          atmStrike,
+          expiry,
+          selectedRight
+        );
+      } catch (err) {
+        console.error("[handleLoadChain] Error:", err);
+      } finally {
+        setLoadingChain(false);
+        setLoadingReplay(false);
+      }
     },
-    [replayAtm, selectedRight, checkAndIncrement]
+    [selectedRight, checkAndIncrement, runPricingAndDisplay]
   );
 
+  /** Toggle call/put: re-run pricing for same strike with new direction */
   const handleToggleRight = useCallback(
-    (right: Right) => {
+    async (right: Right) => {
       setSelectedRight(right);
-      if (!chainData) return;
-      replayAtm(chainData, right, intradayBars);
+      if (!moment || !currentExpiry) return;
+
+      const strike = lastPricing?.strikeChain.atmStrike ?? replayResult?.contract.strike;
+      if (!strike) return;
+
+      setLoadingReplay(true);
+      try {
+        await runPricingAndDisplay(
+          moment.ticker,
+          moment.date,
+          moment.entryTime,
+          strike,
+          currentExpiry,
+          right
+        );
+      } finally {
+        setLoadingReplay(false);
+      }
     },
-    [chainData, intradayBars, replayAtm]
+    [moment, currentExpiry, lastPricing, replayResult, runPricingAndDisplay]
   );
 
+  /** Expiration change from chain snapshot */
   const handleExpirationChange = useCallback(
     async (exp: Expiration) => {
       if (!moment) return;
       setLoadingChain(true);
 
-      const { chain, source } = await fetchLiveChain(
-        moment.ticker,
-        moment.date,
-        moment.entryTime,
-        exp
-      );
+      // Resolve expiry date from the Expiration mode
+      const refDate = new Date(moment.date + "T12:00:00Z");
+      let expiry: Date;
+      if (exp === "0dte") {
+        expiry = refDate;
+      } else {
+        const dayOfWeek = refDate.getUTCDay();
+        const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7;
+        expiry = new Date(refDate);
+        expiry.setUTCDate(expiry.getUTCDate() + daysToFriday);
+      }
+      setCurrentExpiry(expiry);
 
-      setChainData(chain);
-      setDataSource(source);
-      setLoadingChain(false);
-      setReplayResult(null);
-      setStep("chain");
+      try {
+        const strike = lastPricing?.strikeChain.atmStrike ?? 0;
+        await runPricingAndDisplay(
+          moment.ticker,
+          moment.date,
+          moment.entryTime,
+          strike,
+          expiry,
+          selectedRight
+        );
+        setStep("chain");
+      } finally {
+        setLoadingChain(false);
+      }
     },
-    [moment]
+    [moment, lastPricing, selectedRight, runPricingAndDisplay]
   );
 
+  /** User selects a specific contract from the chain snapshot */
   const handleReplayContract = useCallback(
-    (contract: SelectedContract) => {
+    async (contract: SelectedContract) => {
+      if (!moment || !currentExpiry) return;
       setLoadingReplay(true);
-      setTimeout(() => {
-        runReplayWithInsights(contract, intradayBars);
-      }, 400);
+      try {
+        await runPricingAndDisplay(
+          contract.ticker,
+          contract.date,
+          contract.entryTime,
+          contract.strike,
+          currentExpiry,
+          contract.right
+        );
+      } finally {
+        setLoadingReplay(false);
+      }
     },
-    [intradayBars, runReplayWithInsights]
+    [moment, currentExpiry, runPricingAndDisplay]
   );
 
   const handlePickAnother = useCallback(() => {
@@ -209,8 +289,8 @@ export default function BacktestingPage() {
     setChainData(null);
     setReplayResult(null);
     setMoment(null);
-    setDataSource("synthetic");
-    setIntradayBars([]);
+    setLastPricing(null);
+    setCurrentExpiry(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -230,14 +310,8 @@ export default function BacktestingPage() {
                 AI Backtesting
               </h1>
               {chainData && (
-                <span
-                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
-                    dataSource === "polygon"
-                      ? "bg-green-500/10 text-green-400"
-                      : "bg-yellow-500/10 text-yellow-400"
-                  }`}
-                >
-                  {dataSource === "polygon" ? "Live Market Data" : "Synthetic Estimates"}
+                <span className="rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-blue-500/10 text-blue-400">
+                  Synthetic Pricing Engine
                 </span>
               )}
             </div>
