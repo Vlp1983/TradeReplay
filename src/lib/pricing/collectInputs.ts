@@ -84,10 +84,14 @@ async function fetchIntradayBars(
   date: string
 ): Promise<Bar[]> {
   const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=500`;
+  console.log(`[collectInputs] Fetching intraday bars: /v2/aggs/ticker/${ticker}/range/5/minute/${date}/${date}`);
 
   try {
     const data = await polygonFetch<PolygonAggResponse>(path);
-    if (!data.results || data.results.length === 0) return [];
+    if (!data.results || data.results.length === 0) {
+      console.log(`[collectInputs] No intraday bars returned for ${ticker} on ${date}`);
+      return [];
+    }
 
     const bars: Bar[] = [];
     for (const raw of data.results) {
@@ -101,6 +105,7 @@ async function fetchIntradayBars(
         bars.push(toBar(raw));
       }
     }
+    console.log(`[collectInputs] Intraday bars: ${bars.length} (raw: ${data.results.length}), first: O=${bars[0]?.open} H=${bars[0]?.high} L=${bars[0]?.low} C=${bars[0]?.close}, last: O=${bars[bars.length-1]?.open} C=${bars[bars.length-1]?.close}`);
     return bars;
   } catch (err) {
     console.warn(`[collectInputs] Failed to fetch intraday bars for ${ticker}:`, err);

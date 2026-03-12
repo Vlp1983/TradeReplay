@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { MomentPicker } from "@/components/backtesting/moment-picker";
 import { ChainSnapshot } from "@/components/backtesting/chain-snapshot";
 import { ContractReplay } from "@/components/backtesting/contract-replay";
+import type { ExpiryOption } from "@/components/backtesting/contract-replay";
 import { PaywallBlur, PaywallModal } from "@/components/auth/PaywallModal";
 import { useGate } from "@/lib/use-gate";
 import type {
@@ -41,6 +42,8 @@ export default function BacktestingPage() {
   // Cache the latest pricing result for re-use when toggling right / picking strikes
   const [lastPricing, setLastPricing] = useState<OptionPricingResult | null>(null);
   const [currentExpiry, setCurrentExpiry] = useState<Date | null>(null);
+  const [availableExpiries, setAvailableExpiries] = useState<ExpiryOption[]>([]);
+  const [loadingExpiry, setLoadingExpiry] = useState(false);
 
   const { checkAndIncrement, isLimitReached, limitReason } = useGate();
 
@@ -70,6 +73,15 @@ export default function BacktestingPage() {
       console.log("[runPricingAndDisplay] Got pricing:", { bars: pricing.bars.length, atmStrike: pricing.strikeChain.atmStrike, iv: pricing.ivUsed });
 
       setLastPricing(pricing);
+
+      // Store available expiries for the UI chips
+      const expOpts: ExpiryOption[] = pricing.expiries.map((e) => ({
+        date: e.date instanceof Date ? e.date.toISOString() : String(e.date),
+        label: e.label,
+        dte: e.dte,
+        type: e.type,
+      }));
+      setAvailableExpiries(expOpts);
 
       // Build chain data for the strike picker
       const chain = pricingToChainData(
@@ -253,6 +265,30 @@ export default function BacktestingPage() {
     [moment, lastPricing, selectedRight, runPricingAndDisplay]
   );
 
+  /** Expiry change from the replay view expiry chips */
+  const handleReplayExpiryChange = useCallback(
+    async (expiryDate: Date) => {
+      if (!moment) return;
+      setLoadingExpiry(true);
+      setCurrentExpiry(expiryDate);
+
+      try {
+        const strike = lastPricing?.strikeChain.atmStrike ?? replayResult?.contract.strike ?? 0;
+        await runPricingAndDisplay(
+          moment.ticker,
+          moment.date,
+          moment.entryTime,
+          strike,
+          expiryDate,
+          selectedRight
+        );
+      } finally {
+        setLoadingExpiry(false);
+      }
+    },
+    [moment, lastPricing, replayResult, selectedRight, runPricingAndDisplay]
+  );
+
   /** User selects a specific contract from the chain snapshot */
   const handleReplayContract = useCallback(
     async (contract: SelectedContract) => {
@@ -296,6 +332,7 @@ export default function BacktestingPage() {
     setMoment(null);
     setLastPricing(null);
     setCurrentExpiry(null);
+    setAvailableExpiries([]);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -373,6 +410,10 @@ export default function BacktestingPage() {
                       onNewBacktest={handleNewBacktest}
                       onPickAnother={handlePickAnother}
                       onToggleRight={handleToggleRight}
+                      availableExpiries={availableExpiries}
+                      selectedExpiryISO={currentExpiry?.toISOString()}
+                      onExpiryChange={handleReplayExpiryChange}
+                      loadingExpiry={loadingExpiry}
                     />
                   </motion.div>
                 )}

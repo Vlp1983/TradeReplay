@@ -59,7 +59,7 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const tradingDays = useMemo(() => getRecentTradingDays(14), []);
+  const tradingDays = useMemo(() => getRecentTradingDays(42), []); // ~60 calendar days of weekdays
   const timeSlots = useMemo(() => getEntryTimeSlots(), []);
 
   // Load recent tickers on mount

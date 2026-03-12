@@ -58,24 +58,20 @@ export function formatDateDisplay(dateStr: string): string {
 }
 
 /**
- * Return the most recent trading day (Mon–Fri).
- * If today is a weekday before market close, returns today.
- * If today is a weekend, returns the previous Friday.
+ * Return the most recent *completed* trading weekday.
+ * Always returns a past date (never today) since intraday data
+ * for today may not be available from Polygon yet.
+ *
+ * Mon → previous Friday, Tue-Sat → yesterday (or Friday if yesterday is weekend).
  */
 export function getLastTradingDay(): string {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun, 6=Sat
-
-  if (day === 0) {
-    // Sunday → Friday
-    return format(subDays(now, 2), "yyyy-MM-dd");
+  let d = subDays(now, 1); // start from yesterday
+  // Walk back to the nearest weekday
+  while (d.getDay() === 0 || d.getDay() === 6) {
+    d = subDays(d, 1);
   }
-  if (day === 6) {
-    // Saturday → Friday
-    return format(subDays(now, 1), "yyyy-MM-dd");
-  }
-  // Weekday — use today
-  return format(now, "yyyy-MM-dd");
+  return format(d, "yyyy-MM-dd");
 }
 
 /**

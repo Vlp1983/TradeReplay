@@ -144,6 +144,7 @@ export function generateIntradayBars(params: {
     optionType,
     dteBucket
   );
+  console.log(`[generateIntradayBars] spot=${spot}, strike=${strike}, dte=${dte}, iv=${iv.toFixed(4)}, openPrice=${openPrice.toFixed(4)}, bars=${n}`);
 
   const optionBars: OptionBar[] = [];
   let currentPrice = openPrice;
@@ -235,6 +236,7 @@ export function generateIntradayBars(params: {
     currentPrice = barClose;
   }
 
+  console.log(`[generateIntradayBars] Output: ${optionBars.length} bars, first open=${optionBars[0]?.open}, last close=${optionBars[optionBars.length - 1]?.close}`);
   return optionBars;
 }
 
