@@ -23,11 +23,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // optionType
+    if (optionType !== "call" && optionType !== "put") {
+      return NextResponse.json({ error: "Invalid optionType" }, { status: 400 });
+    }
+
+    // strike
+    const strikeNum = Number(strike);
+    if (isNaN(strikeNum) || strikeNum <= 0) {
+      return NextResponse.json({ error: "Invalid strike" }, { status: 400 });
+    }
+
+    // ticker — only allow alphanumeric and dot, max 10 chars
+    if (!/^[A-Z0-9.]{1,10}$/.test(String(ticker).toUpperCase())) {
+      return NextResponse.json({ error: "Invalid ticker" }, { status: 400 });
+    }
+
+    // replayDate and expiry
+    const parsedReplayDate = new Date(replayDate);
+    const parsedExpiry = new Date(expiry);
+    if (isNaN(parsedReplayDate.getTime()) || isNaN(parsedExpiry.getTime())) {
+      return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+    }
+
     const result = await generateOptionPricing({
       ticker,
-      replayDate: new Date(replayDate),
-      strike: Number(strike),
-      expiry: new Date(expiry),
+      replayDate: parsedReplayDate,
+      strike: strikeNum,
+      expiry: parsedExpiry,
       optionType,
     });
 
@@ -42,10 +65,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(serialized);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[/api/pricing] Error:", message);
+    console.error("[/api/pricing] Error:", err);
     return NextResponse.json(
-      { error: "Pricing engine failed", details: message },
+      { error: "Pricing unavailable. Please try again." },
       { status: 500 }
     );
   }

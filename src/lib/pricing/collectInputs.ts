@@ -28,10 +28,14 @@ function apiKey(): string {
 async function polygonFetch<T>(path: string): Promise<T> {
   const separator = path.includes("?") ? "&" : "?";
   const url = `${POLYGON_BASE}${path}${separator}apiKey=${apiKey()}`;
-  const res = await fetch(url);
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error("Polygon API request failed");
+  }
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Polygon API ${res.status}: ${body}`);
+    throw new Error(`Polygon API request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
 }
