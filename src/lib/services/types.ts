@@ -1,10 +1,10 @@
 /**
- * Types for the Yahoo Finance options data service.
- * These represent real market data fetched from Yahoo Finance,
- * normalized for our dual-confirmation backtesting engine.
+ * Types for the market data service (Polygon.io).
+ * These represent real market data normalized for our
+ * dual-confirmation backtesting engine.
  */
 
-/** Raw contract data pulled from Yahoo Finance */
+/** Raw contract data pulled from market data provider */
 export interface MarketContract {
   contractSymbol: string;
   strike: number;
@@ -20,6 +20,13 @@ export interface MarketContract {
   midPrice: number | null;
   /** (ask - bid) / midPrice — measures liquidity; null if midPrice is invalid */
   spreadPercent: number | null;
+  /** Greeks from Polygon snapshot (may be null if unavailable) */
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+  };
 }
 
 /** Full options chain for a single expiration date */
@@ -42,14 +49,14 @@ export interface MarketChainSummary {
 
 /**
  * Normalized contract output for the dual-confirmation engine.
- * Bridges real Yahoo data → our ChainRow / SelectedContract types.
+ * Bridges real market data → our ChainRow / SelectedContract types.
  */
 export interface NormalizedContract {
   contractSymbol: string;
   strike: number;
   expiration: string;
   right: "call" | "put";
-  /** Best available price: midPrice > lastPrice > pathA/B estimate */
+  /** Best available price: midpoint > (bid+ask)/2 > day.close > BS estimate */
   premium: number;
   premiumSource: "mid" | "last" | "estimated";
   /** Confidence based on spread tightness + volume */
@@ -65,6 +72,13 @@ export interface NormalizedContract {
     impliedVolatility: number;
     openInterest: number;
     volume: number;
+  };
+  /** Greeks from Polygon (may be undefined if not available) */
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
   };
 }
 

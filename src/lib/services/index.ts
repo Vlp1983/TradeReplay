@@ -4,7 +4,9 @@ export {
   getContract,
   normalizeChain,
   fetchNormalizedChain,
-} from "./yahoo-finance";
+  getIntradayBars,
+  getTickerDetails,
+} from "./polygon";
 
 export type {
   MarketContract,

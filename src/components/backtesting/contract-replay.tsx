@@ -7,14 +7,30 @@ import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
 import { KeyMomentsList } from "./key-moments-list";
 import { InsightsPanel } from "./insights-panel";
+import { DeepDivePanel } from "./deep-dive-panel";
 import type { ReplayResult, Right } from "@/lib/engine/types";
-import { getExpirationLabel, to12Hour } from "@/lib/engine/dates";
+import { to12Hour } from "@/lib/engine/dates";
+
+/** Serialized expiry from pricing API (date is ISO string after JSON round-trip) */
+export interface ExpiryOption {
+  date: string;   // ISO string
+  label: string;
+  dte: number;
+  type: "0DTE" | "weekly";
+}
 
 interface ContractReplayProps {
   result: ReplayResult;
   onNewBacktest: () => void;
   onPickAnother: () => void;
   onToggleRight: (right: Right) => void;
+  /** Available expiries from the pricing engine */
+  availableExpiries?: ExpiryOption[];
+  /** Currently selected expiry ISO string */
+  selectedExpiryISO?: string;
+  /** Called when user picks a different expiry */
+  onExpiryChange?: (expiryDate: Date) => void;
+  loadingExpiry?: boolean;
 }
 
 export function ContractReplay({
@@ -22,14 +38,23 @@ export function ContractReplay({
   onNewBacktest,
   onPickAnother,
   onToggleRight,
+  availableExpiries,
+  selectedExpiryISO,
+  onExpiryChange,
+  loadingExpiry,
 }: ContractReplayProps) {
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
 
   const contractLabel = `${contract.ticker} ${contract.strike}${contract.right === "call" ? "C" : "P"}`;
-  const expLabel = getExpirationLabel(contract.date, contract.expiration);
   const isMultiDay = toExpirationPoints.some((p) => p.dayIndex > 0);
   const isCall = contract.right === "call";
+
+  // Derive expiry label from selected expiry or fallback
+  const selectedExpiry = availableExpiries?.find(
+    (e) => e.date === selectedExpiryISO
+  );
+  const expLabel = selectedExpiry?.label ?? contract.expiration;
 
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
@@ -97,6 +122,33 @@ export function ContractReplay({
           </Button>
         </div>
 
+        {/* Expiry selector chips */}
+        {availableExpiries && availableExpiries.length > 0 && onExpiryChange && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[12px] font-medium text-text-muted">Expiry:</span>
+            {availableExpiries.map((exp) => {
+              const isActive = exp.date === selectedExpiryISO;
+              return (
+                <button
+                  key={exp.date}
+                  disabled={loadingExpiry}
+                  onClick={() => onExpiryChange(new Date(exp.date))}
+                  className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                    isActive
+                      ? "bg-accent text-white"
+                      : "border border-border text-text-secondary hover:border-accent/40 hover:text-text-primary"
+                  } ${loadingExpiry ? "opacity-50" : ""}`}
+                >
+                  {exp.label}
+                </button>
+              );
+            })}
+            {loadingExpiry && (
+              <span className="text-[11px] text-text-muted">Loading...</span>
+            )}
+          </div>
+        )}
+
         <p className="mt-2.5 text-[12px] text-text-muted">
           Showing the at-the-money (ATM) {isCall ? "call" : "put"} by default.
           Want to try an out-of-the-money (OTM) strike?{" "}
@@ -111,7 +163,7 @@ export function ContractReplay({
 
       {/* Summary cards */}
       <div className="mb-5">
-        <SummaryCards metrics={metrics} />
+        <SummaryCards metrics={metrics} right={contract.right} />
       </div>
 
       {/* Chart */}
@@ -130,13 +182,18 @@ export function ContractReplay({
       </div>
 
       {/* What Happened & Why — AI-generated contextual analysis */}
-      <div className="mb-6">
+      <div className="mb-5">
         <InsightsPanel
           insights={result.insights}
           source={result.insightsSource}
           ticker={contract.ticker}
           date={contract.date}
         />
+      </div>
+
+      {/* Deep Dive — strategy-specific AI analysis */}
+      <div className="mb-6">
+        <DeepDivePanel result={result} />
       </div>
 
       {/* Actions */}

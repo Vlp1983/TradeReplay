@@ -12,9 +12,11 @@ interface PricingTier {
   price: string;
   period?: string;
   badge?: string;
+  description?: string;
   features: string[];
   ctaLabel: string;
   ctaVariant: "default" | "outline";
+  ctaHref: string;
 }
 
 const tiers: PricingTier[] = [
@@ -28,6 +30,22 @@ const tiers: PricingTier[] = [
     ],
     ctaLabel: "Start Free",
     ctaVariant: "outline",
+    ctaHref: "/signin",
+  },
+  {
+    name: "Day Pass",
+    price: "$4.99",
+    description: "Full Pro access for 24 hours. No commitment.",
+    badge: "Try It",
+    features: [
+      "24-hour access to all Pro features",
+      "Unlimited backtesting",
+      "Full Key Moments explanations",
+      "AI-powered insights",
+    ],
+    ctaLabel: "Buy Day Pass",
+    ctaVariant: "outline",
+    ctaHref: "/signin?redirect=/backtesting",
   },
   {
     name: "Pro Monthly",
@@ -41,6 +59,7 @@ const tiers: PricingTier[] = [
     ],
     ctaLabel: "Upgrade to Pro",
     ctaVariant: "default",
+    ctaHref: "/signin",
   },
   {
     name: "Pro Annual",
@@ -54,6 +73,7 @@ const tiers: PricingTier[] = [
     ],
     ctaLabel: "Upgrade to Pro",
     ctaVariant: "outline",
+    ctaHref: "/signin",
   },
 ];
 
@@ -69,7 +89,7 @@ export function PricingSection() {
         </p>
       </div>
 
-      <div className="mt-12 grid gap-6 md:grid-cols-3 max-w-4xl mx-auto">
+      <div className="mt-12 grid gap-6 md:grid-cols-4 max-w-5xl mx-auto">
         {tiers.map((tier) => (
           <Card
             key={tier.name}
@@ -94,6 +114,9 @@ export function PricingSection() {
                   <span className="text-sm text-text-muted">{tier.period}</span>
                 )}
               </div>
+              {tier.description && (
+                <p className="mt-1 text-xs text-text-muted">{tier.description}</p>
+              )}
             </CardHeader>
             <CardContent className="flex flex-1 flex-col">
               <ul className="flex-1 space-y-2.5">
@@ -112,7 +135,7 @@ export function PricingSection() {
                 className="mt-6 w-full"
                 asChild
               >
-                <Link href="/signin">{tier.ctaLabel}</Link>
+                <Link href={tier.ctaHref}>{tier.ctaLabel}</Link>
               </Button>
             </CardContent>
           </Card>

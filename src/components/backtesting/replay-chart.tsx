@@ -40,6 +40,7 @@ function CustomTooltip({ active, payload, label }: TooltipProps) {
   const isProfit = pt.pl_dollar >= 0;
   const plColor = isProfit ? "#22C55E" : "#EF4444";
   const sign = isProfit ? "+" : "";
+  const plPerShare = pt.pl_dollar / 100;
 
   return (
     <div
@@ -53,10 +54,13 @@ function CustomTooltip({ active, payload, label }: TooltipProps) {
         {label}
       </p>
       <p className="text-[13px] font-semibold" style={{ color: plColor }}>
-        {sign}${pt.pl_dollar.toLocaleString()} / {sign}{pt.pl_pct.toFixed(1)}%
+        {sign}${plPerShare.toFixed(2)} per share · {sign}${pt.pl_dollar.toLocaleString()} per contract
       </p>
       <p className="text-[11px]" style={{ color: "rgba(246,248,255,0.45)" }}>
-        Premium: ${pt.price.toFixed(2)}
+        ({sign}{pt.pl_pct.toFixed(1)}%)
+      </p>
+      <p className="text-[11px]" style={{ color: "rgba(246,248,255,0.45)" }}>
+        Premium: ${pt.price.toFixed(2)} per share · ${(pt.price * 100).toFixed(2)} per contract
       </p>
     </div>
   );
@@ -78,7 +82,7 @@ function PriceTooltip({ active, payload, label }: TooltipProps) {
         {label}
       </p>
       <p className="text-[13px] font-semibold" style={{ color: "#3B82F6" }}>
-        ${pt.price.toFixed(2)}
+        ${pt.price.toFixed(2)} per share · ${(pt.price * 100).toFixed(2)} per contract
       </p>
     </div>
   );
@@ -212,7 +216,7 @@ export function ReplayChart({
             strokeWidth={1.5}
             strokeDasharray="6 4"
             label={{
-              value: view === "pl" ? "Breakeven" : `Entry $${entryPremium.toFixed(2)}`,
+              value: view === "pl" ? "Breakeven" : `Entry $${entryPremium.toFixed(2)}/sh`,
               position: "left",
               fill: "#3B82F6",
               fontSize: 11,

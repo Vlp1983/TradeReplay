@@ -58,6 +58,23 @@ export function formatDateDisplay(dateStr: string): string {
 }
 
 /**
+ * Return the most recent *completed* trading weekday.
+ * Always returns a past date (never today) since intraday data
+ * for today may not be available from Polygon yet.
+ *
+ * Mon → previous Friday, Tue-Sat → yesterday (or Friday if yesterday is weekend).
+ */
+export function getLastTradingDay(): string {
+  const now = new Date();
+  let d = subDays(now, 1); // start from yesterday
+  // Walk back to the nearest weekday
+  while (d.getDay() === 0 || d.getDay() === 6) {
+    d = subDays(d, 1);
+  }
+  return format(d, "yyyy-MM-dd");
+}
+
+/**
  * Format expiration date label.
  */
 export function getExpirationLabel(

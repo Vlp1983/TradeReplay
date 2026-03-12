@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import Stripe from 'stripe'
 
@@ -6,7 +7,9 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY!)
 }
 
-export async function POST(request: Request) {
+const DAY_PASS_PRICE_ID = 'price_1T8j1ZRzoQ86WEJxulFB2p7c'
+
+export async function POST() {
   const stripe = getStripe()
   try {
     const supabase = await createClient()
@@ -14,12 +17,6 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { priceId, couponCode } = await request.json()
-
-    if (!priceId) {
-      return NextResponse.json({ error: 'Price ID required' }, { status: 400 })
     }
 
     const { data: profile } = await supabase
@@ -44,37 +41,29 @@ export async function POST(request: Request) {
         .eq('id', user.id)
     }
 
-    let discounts: Stripe.Checkout.SessionCreateParams.Discount[] = []
-    if (couponCode) {
-      try {
-        const coupon = await stripe.coupons.retrieve(couponCode)
-        if (coupon.valid) {
-          discounts = [{ coupon: coupon.id }]
-        }
-      } catch {
-        // Invalid coupon — proceed without discount
-      }
-    }
-
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
-      mode: 'subscription',
+      mode: 'payment',
       payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
-      discounts,
-      success_url: `${appUrl}/account?checkout=success`,
-      cancel_url: `${appUrl}/pricing?checkout=canceled`,
-      metadata: { supabase_user_id: user.id },
-      subscription_data: {
-        metadata: { supabase_user_id: user.id },
-      },
+      line_items: [{ price: DAY_PASS_PRICE_ID, quantity: 1 }],
+      success_url: `${appUrl}/backtesting?day_pass=success`,
+      cancel_url: `${appUrl}/pricing`,
+      metadata: { supabase_user_id: user.id, type: 'day_pass' },
     })
+
+    // Set day_pass_expires_at to 24 hours from now using service client
+    const serviceClient = createServiceClient()
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    await serviceClient
+      .from('profiles')
+      .update({ day_pass_expires_at: expiresAt } as Record<string, unknown>)
+      .eq('id', user.id)
 
     return NextResponse.json({ url: session.url })
   } catch (error) {
-    console.error('Stripe checkout error:', error)
-    return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 })
+    console.error('Day pass checkout error:', error)
+    return NextResponse.json({ error: 'Failed to create day pass session' }, { status: 500 })
   }
 }

@@ -1,7 +1,8 @@
 /**
- * Client-side bridge: fetch real options chain from /api/options (Yahoo Finance)
- * and map it to our ChainData format. Falls back to synthetic generateChain()
- * if the API call fails (e.g. no options data for crypto/futures tickers).
+ * Client-side bridge: calls the synthetic pricing engine via /api/pricing
+ * and adapts the result into the existing ChainData / ReplayResult types.
+ *
+ * Also retains AI insights fetching (unchanged).
  */
 
 import type {
@@ -9,239 +10,395 @@ import type {
   Expiration,
   ChainData,
   ChainRow,
-  Confidence,
+  SelectedContract,
+  ReplayResult,
+  TimePoint,
+  ReplayMetrics,
+  KeyMoment,
 } from "./types";
-import type { IntradayBar } from "@/lib/services/yahoo-finance";
-import { generateChain } from "./chain";
+import type {
+  OptionPricingResult,
+  OptionBar,
+  Greeks,
+  StrikeChain,
+  Expiry,
+} from "@/lib/pricing/types";
 
-// ─── Yahoo symbol mapping ────────────────────────────────────────────
+// ─── Serialized types from API response ─────────────────────────────
 
-const YAHOO_SYMBOLS: Record<string, string> = {
-  // Equities/ETFs — same symbol
-  SPY: "SPY",
-  QQQ: "QQQ",
-  AAPL: "AAPL",
-  TSLA: "TSLA",
-  NVDA: "NVDA",
-  AMZN: "AMZN",
-  // Futures — Yahoo uses =F suffix
-  ES: "ES=F",
-  NQ: "NQ=F",
-  CL: "CL=F",
-  GC: "GC=F",
-  SI: "SI=F",
-  // Crypto — Yahoo uses -USD suffix
-  BTC: "BTC-USD",
-  ETH: "ETH-USD",
-  SOL: "SOL-USD",
-  DOGE: "DOGE-USD",
-  XRP: "XRP-USD",
-};
-
-function yahooSymbol(ticker: string): string {
-  return YAHOO_SYMBOLS[ticker] ?? ticker;
+interface SerializedExpiry {
+  date: string; // ISO string
+  label: string;
+  dte: number;
+  type: "0DTE" | "weekly";
 }
 
-// ─── Expiration date resolution ──────────────────────────────────────
+interface PricingAPIResponse extends Omit<OptionPricingResult, "expiries"> {
+  expiries: SerializedExpiry[];
+}
+
+// ─── Core pricing call ──────────────────────────────────────────────
 
 /**
- * Given Yahoo's list of available expirations, pick the best match
- * for our "0dte" or "friday" modes.
+ * Call the synthetic pricing engine for a specific contract.
+ * Returns the raw OptionPricingResult (with expiry dates deserialized).
  */
-function pickExpiration(
-  available: string[],
-  mode: Expiration
-): string | undefined {
-  if (!available.length) return undefined;
-
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
-
-  if (mode === "0dte") {
-    // Prefer today's expiration, otherwise nearest
-    return available.find((d) => d === todayStr) ?? available[0];
-  }
-
-  // "friday" — find the next Friday (or this Friday if today is before it)
-  const dayOfWeek = today.getDay();
-  const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7; // next Friday if today is Fri
-  const friday = new Date(today);
-  friday.setDate(friday.getDate() + daysToFriday);
-  const fridayStr = friday.toISOString().slice(0, 10);
-
-  return (
-    available.find((d) => d === fridayStr) ??
-    // Fallback: nearest expiration after today
-    available.find((d) => d > todayStr) ??
-    available[0]
-  );
-}
-
-// ─── Normalized API response → ChainData mapping ────────────────────
-
-interface APIChainResponse {
-  symbol: string;
-  underlyingPrice: number;
-  expiration: string;
-  calls: APIContract[];
-  puts: APIContract[];
-  availableExpirations?: string[];
-}
-
-interface APIContract {
+export async function fetchPricing(params: {
+  ticker: string;
+  replayDate: string;   // YYYY-MM-DD
   strike: number;
-  premium: number;
-  confidence: Confidence;
-  isATM: boolean;
-}
+  expiry: Date;
+  optionType: "call" | "put";
+}): Promise<OptionPricingResult> {
+  const res = await fetch("/api/pricing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ticker: params.ticker,
+      replayDate: new Date(params.replayDate + "T10:00:00").toISOString(),
+      strike: params.strike,
+      expiry: params.expiry.toISOString(),
+      optionType: params.optionType,
+    }),
+  });
 
-function mapContracts(contracts: APIContract[]): ChainRow[] {
-  return contracts.map((c) => ({
-    strike: c.strike,
-    premium: c.premium,
-    confidence: c.confidence,
-    isATM: c.isATM,
-  }));
-}
-
-/**
- * Trim to ~10 strikes centered around ATM for a clean UI.
- */
-function trimAroundATM(rows: ChainRow[], count = 10): ChainRow[] {
-  const atmIdx = rows.findIndex((r) => r.isATM);
-  if (atmIdx === -1 || rows.length <= count) return rows;
-
-  const half = Math.floor(count / 2);
-  let start = Math.max(0, atmIdx - half);
-  let end = start + count;
-  if (end > rows.length) {
-    end = rows.length;
-    start = Math.max(0, end - count);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Pricing API ${res.status}: ${body}`);
   }
-  return rows.slice(start, end);
+
+  const data: PricingAPIResponse = await res.json();
+
+  // Deserialize expiry dates
+  return {
+    ...data,
+    expiries: data.expiries.map((e) => ({
+      ...e,
+      date: new Date(e.date),
+    })),
+  };
 }
 
-// ─── Public API ──────────────────────────────────────────────────────
-
-export interface LiveChainResult {
-  chain: ChainData;
-  availableExpirations: string[];
-  source: "yahoo" | "synthetic";
-}
+// ─── Resolve default expiry date ────────────────────────────────────
 
 /**
- * Fetch a real options chain from Yahoo Finance via our API route.
- * Falls back to synthetic data if the API fails.
+ * For a given replay date, determine the best default expiry:
+ * - If it's a Friday → 0DTE (same day)
+ * - Otherwise → next Friday
  */
-export async function fetchLiveChain(
+export function resolveDefaultExpiry(replayDate: string): Date {
+  const d = new Date(replayDate + "T12:00:00Z");
+  const dayOfWeek = d.getUTCDay(); // 0=Sun, 5=Fri
+
+  if (dayOfWeek === 5) {
+    return d;
+  }
+
+  const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7;
+  const friday = new Date(d);
+  friday.setUTCDate(friday.getUTCDate() + daysToFriday);
+  return friday;
+}
+
+// ─── Adapt pricing result → ChainData ───────────────────────────────
+
+/**
+ * Convert the pricing engine's StrikeChain + Greeks into ChainData
+ * that the ChainSnapshot component expects.
+ */
+export function pricingToChainData(
   ticker: Ticker,
   date: string,
   entryTime: string,
-  expiration: Expiration
-): Promise<LiveChainResult> {
-  try {
-    const symbol = yahooSymbol(ticker);
+  pricing: OptionPricingResult,
+  spot: number
+): ChainData {
+  const expiration: Expiration = pricing.classification.dteBucket === "0DTE" ? "0dte" : "friday";
+  const atmPremium = pricing.bars.length > 0 ? pricing.bars[0].open : 1.0;
 
-    // First fetch: get available expirations + nearest chain
-    const res = await fetch(`/api/options?symbol=${encodeURIComponent(symbol)}`);
-    if (!res.ok) throw new Error(`API ${res.status}`);
-
-    const data: APIChainResponse = await res.json();
-    const availableExps = data.availableExpirations ?? [data.expiration];
-
-    // Determine which expiration to use
-    const targetExp = pickExpiration(availableExps, expiration);
-
-    // If the nearest chain doesn't match our target, re-fetch with the right one
-    let chainData = data;
-    if (targetExp && targetExp !== data.expiration) {
-      const res2 = await fetch(
-        `/api/options?symbol=${encodeURIComponent(symbol)}&expiration=${targetExp}`
-      );
-      if (res2.ok) {
-        chainData = await res2.json();
-      }
-    }
-
-    // Map API response → ChainData
-    const calls = trimAroundATM(mapContracts(chainData.calls));
-    const puts = trimAroundATM(mapContracts(chainData.puts));
-
-    // Ensure at least one ATM row exists
-    if (calls.length === 0 && puts.length === 0) {
-      throw new Error("Empty chain from Yahoo");
-    }
-
-    const chain: ChainData = {
-      ticker,
-      date,
-      entryTime,
-      expiration,
-      underlyingPrice: chainData.underlyingPrice,
-      calls,
-      puts,
+  const calls: ChainRow[] = pricing.strikeChain.calls.map((s) => {
+    const isATM = s.strike === pricing.strikeChain.atmStrike;
+    // Rough premium estimate: scale from ATM based on distance
+    const moneyness = Math.abs(s.strike - pricing.strikeChain.atmStrike) / pricing.strikeChain.atmStrike;
+    const premium = isATM
+      ? atmPremium
+      : Math.max(0.01, atmPremium * Math.max(0.1, 1 - moneyness * 8));
+    return {
+      strike: s.strike,
+      premium: +premium.toFixed(2),
+      confidence: "Med" as const,
+      isATM,
+      greeks: isATM
+        ? {
+            delta: pricing.greeksAtOpen.delta,
+            gamma: pricing.greeksAtOpen.gamma,
+            theta: pricing.greeksAtOpen.theta,
+            vega: pricing.greeksAtOpen.vega,
+          }
+        : undefined,
+      impliedVolatility: pricing.ivUsed,
     };
+  });
 
-    return { chain, availableExpirations: availableExps, source: "yahoo" };
-  } catch (err) {
-    // Fall back to synthetic
-    console.warn(
-      `[fetchLiveChain] Yahoo fetch failed for ${ticker}, using synthetic:`,
-      err
-    );
-    const chain = generateChain(ticker, date, entryTime, expiration);
-    return { chain, availableExpirations: [], source: "synthetic" };
-  }
+  const puts: ChainRow[] = pricing.strikeChain.puts.map((s) => {
+    const isATM = s.strike === pricing.strikeChain.atmStrike;
+    const moneyness = Math.abs(s.strike - pricing.strikeChain.atmStrike) / pricing.strikeChain.atmStrike;
+    const premium = isATM
+      ? atmPremium
+      : Math.max(0.01, atmPremium * Math.max(0.1, 1 - moneyness * 8));
+    return {
+      strike: s.strike,
+      premium: +premium.toFixed(2),
+      confidence: "Med" as const,
+      isATM,
+      greeks: isATM
+        ? {
+            delta: -Math.abs(pricing.greeksAtOpen.delta),
+            gamma: pricing.greeksAtOpen.gamma,
+            theta: pricing.greeksAtOpen.theta,
+            vega: pricing.greeksAtOpen.vega,
+          }
+        : undefined,
+      impliedVolatility: pricing.ivUsed,
+    };
+  });
+
+  return {
+    ticker,
+    date,
+    entryTime,
+    expiration,
+    underlyingPrice: spot,
+    calls,
+    puts,
+    source: "synthetic",
+  };
 }
 
-// ─── Intraday price data ──────────────────────────────────────────────
-
-export interface IntradayResult {
-  bars: IntradayBar[];
-  source: "yahoo" | "none";
-}
+// ─── Adapt pricing result → ReplayResult ────────────────────────────
 
 /**
- * Fetch real intraday price bars for the underlying via /api/intraday.
- * Returns empty bars array if data is unavailable (too old, no data, etc).
+ * Convert OptionBar[] from the pricing engine into a full ReplayResult
+ * compatible with the existing ContractReplay component.
  */
-export async function fetchIntradayPrices(
-  ticker: Ticker,
-  date: string
-): Promise<IntradayResult> {
-  try {
-    const symbol = yahooSymbol(ticker);
-    const res = await fetch(
-      `/api/intraday?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`
-    );
-    if (!res.ok) throw new Error(`API ${res.status}`);
-
-    const data = await res.json();
-    if (!data.bars || data.bars.length === 0) {
-      throw new Error("No bars returned");
-    }
-
-    return { bars: data.bars as IntradayBar[], source: "yahoo" };
-  } catch (err) {
-    console.warn(
-      `[fetchIntradayPrices] Failed for ${ticker} on ${date}:`,
-      err
-    );
-    return { bars: [], source: "none" };
+export function pricingToReplayResult(
+  contract: SelectedContract,
+  pricing: OptionPricingResult
+): ReplayResult {
+  const bars = pricing.bars;
+  if (bars.length === 0) {
+    return emptyReplayResult(contract, pricing);
   }
+
+  const entryPremium = bars[0].open;
+
+  // Build TimePoint[] from OptionBar[]
+  const allPoints: TimePoint[] = bars.map((bar) => {
+    const premium = bar.close;
+    const plDollar = +((premium - entryPremium) * 100).toFixed(0);
+    const plPct = entryPremium > 0.01
+      ? +(((premium - entryPremium) / entryPremium) * 100).toFixed(1)
+      : 0;
+
+    // Derive time label from timestamp
+    const d = new Date(bar.timestamp);
+    const hour = d.getUTCHours() - 5; // approximate ET
+    const minute = d.getUTCMinutes();
+    let h12 = hour;
+    const suffix = h12 >= 12 ? "PM" : "AM";
+    if (h12 === 0) h12 = 12;
+    else if (h12 > 12) h12 -= 12;
+    const timeStr = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+    const label = `${h12}:${minute.toString().padStart(2, "0")} ${suffix}`;
+
+    return {
+      time: timeStr,
+      label,
+      price: +premium.toFixed(2),
+      pl_dollar: plDollar,
+      pl_pct: plPct,
+      dayIndex: 0,
+    };
+  });
+
+  // Force first point to exact entry
+  if (allPoints.length > 0) {
+    allPoints[0].price = +entryPremium.toFixed(2);
+    allPoints[0].pl_dollar = 0;
+    allPoints[0].pl_pct = 0;
+  }
+
+  const metrics = computeMetrics(allPoints, entryPremium, pricing);
+  const keyMoments = detectKeyMoments(allPoints, entryPremium);
+
+  return {
+    contract: { ...contract, entryPremium: +entryPremium.toFixed(2) },
+    sameDayPoints: allPoints,
+    toExpirationPoints: allPoints,
+    metrics,
+    keyMoments,
+  };
 }
 
-// ─── AI insights ─────────────────────────────────────────────────────
+function computeMetrics(
+  points: TimePoint[],
+  entryPremium: number,
+  pricing: OptionPricingResult
+): ReplayMetrics {
+  let peakPt = points[0];
+  let troughPt = points[0];
+
+  for (const pt of points) {
+    if (pt.pl_dollar > peakPt.pl_dollar) peakPt = pt;
+    if (pt.pl_dollar < troughPt.pl_dollar) troughPt = pt;
+  }
+
+  const last = points[points.length - 1];
+
+  let optimalPt = last;
+  let optimalReason = "held to close";
+  let peak = points[0];
+  for (const pt of points) {
+    if (pt.pl_pct >= 50) {
+      optimalPt = pt;
+      optimalReason = "hit +50% profit target";
+      break;
+    }
+    if (pt.pl_dollar > peak.pl_dollar) peak = pt;
+    if (peak.pl_pct > 10 && pt.pl_pct < peak.pl_pct - 30) {
+      optimalPt = peak;
+      optimalReason = "peak before 30% retrace";
+      break;
+    }
+  }
+
+  return {
+    entryPremium: +entryPremium.toFixed(2),
+    exitPremium: last.price,
+    exitAtClosePL: last.pl_dollar,
+    exitAtClosePLPct: last.pl_pct,
+    maxProfit: peakPt.pl_dollar,
+    maxProfitPct: peakPt.pl_pct,
+    maxProfitTime: peakPt.label,
+    maxDrawdown: troughPt.pl_dollar,
+    maxDrawdownPct: troughPt.pl_pct,
+    maxDrawdownTime: troughPt.label,
+    optimalExitTime: optimalPt.label,
+    optimalExitPL: optimalPt.pl_dollar,
+    optimalExitPLPct: optimalPt.pl_pct,
+    optimalExitPremium: optimalPt.price,
+    optimalExitReason: optimalReason,
+    ivAtEntry: pricing.ivUsed,
+    deltaAtEntry: pricing.greeksAtOpen.delta,
+    gammaAtEntry: pricing.greeksAtOpen.gamma,
+    thetaAtEntry: pricing.greeksAtOpen.theta,
+    vegaAtEntry: pricing.greeksAtOpen.vega,
+  };
+}
+
+function detectKeyMoments(
+  points: TimePoint[],
+  entryPremium: number
+): KeyMoment[] {
+  const moments: KeyMoment[] = [];
+  if (points.length < 2) return moments;
+
+  moments.push({
+    time: points[0].label,
+    label: "Entry",
+    reason: `Entered at $${entryPremium.toFixed(2)} per share.`,
+    type: "trade",
+  });
+
+  let peakIdx = 0;
+  let troughIdx = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].pl_dollar > points[peakIdx].pl_dollar) peakIdx = i;
+    if (points[i].pl_dollar < points[troughIdx].pl_dollar) troughIdx = i;
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    if (Math.abs(points[i].pl_pct) >= 15) {
+      moments.push({
+        time: points[i].label,
+        label: points[i].pl_pct > 0 ? "Momentum surge" : "Momentum drop",
+        reason: `Contract moved ${points[i].pl_pct > 0 ? "+" : ""}${points[i].pl_pct.toFixed(0)}%.`,
+        type: "trade",
+      });
+      break;
+    }
+  }
+
+  if (points[peakIdx].pl_pct > 5) {
+    moments.push({
+      time: points[peakIdx].label,
+      label: "Peak profit (MFE)",
+      reason: `Max favorable excursion: +${points[peakIdx].pl_pct.toFixed(0)}%.`,
+      type: "trade",
+    });
+  }
+
+  if (points[troughIdx].pl_pct < -10) {
+    moments.push({
+      time: points[troughIdx].label,
+      label: "Max drawdown (MAE)",
+      reason: `Max adverse excursion: ${points[troughIdx].pl_pct.toFixed(0)}%.`,
+      type: "trade",
+    });
+  }
+
+  const last = points[points.length - 1];
+  moments.push({
+    time: last.label,
+    label: last.pl_pct >= 0 ? "Profitable close" : "Loss at close",
+    reason: `Closed at ${last.pl_pct >= 0 ? "+" : ""}${last.pl_pct.toFixed(0)}%.`,
+    type: "trade",
+  });
+
+  return moments;
+}
+
+function emptyReplayResult(
+  contract: SelectedContract,
+  pricing: OptionPricingResult
+): ReplayResult {
+  return {
+    contract,
+    sameDayPoints: [],
+    toExpirationPoints: [],
+    metrics: {
+      entryPremium: 0,
+      exitPremium: 0,
+      exitAtClosePL: 0,
+      exitAtClosePLPct: 0,
+      maxProfit: 0,
+      maxProfitPct: 0,
+      maxProfitTime: "",
+      maxDrawdown: 0,
+      maxDrawdownPct: 0,
+      maxDrawdownTime: "",
+      optimalExitTime: "",
+      optimalExitPL: 0,
+      optimalExitPLPct: 0,
+      optimalExitPremium: 0,
+      optimalExitReason: "",
+      ivAtEntry: pricing.ivUsed,
+      deltaAtEntry: pricing.greeksAtOpen.delta,
+      gammaAtEntry: pricing.greeksAtOpen.gamma,
+      thetaAtEntry: pricing.greeksAtOpen.theta,
+      vegaAtEntry: pricing.greeksAtOpen.vega,
+    },
+    keyMoments: [],
+  };
+}
+
+// ─── AI insights (unchanged) ─────────────────────────────────────────
 
 export interface InsightsResult {
   insights: string[];
   source: "ai" | "data-driven";
 }
 
-/**
- * Fetch AI-generated contextual insights for a replay.
- */
 export async function fetchInsights(payload: {
   ticker: string;
   date: string;
