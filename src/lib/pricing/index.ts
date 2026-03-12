@@ -90,10 +90,27 @@ export async function generateOptionPricing(params: {
       optionType
     );
 
-    // Use actual open price if available, otherwise fallback
-    const spot = inputs.underlyingOpenPrice > 0
-      ? inputs.underlyingOpenPrice
-      : 100; // generic fallback
+    // Use actual open price if available, otherwise try daily bars, then strike as fallback
+    let spot: number;
+    if (inputs.underlyingOpenPrice > 0) {
+      spot = inputs.underlyingOpenPrice;
+    } else if (inputs.priorDailyBars.length > 0) {
+      // Use the most recent daily bar close as fallback
+      spot = inputs.priorDailyBars[inputs.priorDailyBars.length - 1].close;
+      console.warn(`[generateOptionPricing] No intraday open price, using last daily close: ${spot}`);
+    } else {
+      // Last resort: use strike (assumes ATM) — much better than hardcoded 100
+      spot = strike;
+      console.warn(`[generateOptionPricing] No price data available, using strike as spot fallback: ${spot}`);
+    }
+
+    console.log(
+      `[generateOptionPricing] ticker=${ticker} date=${replayDate.toISOString().slice(0, 10)} ` +
+      `optionType=${optionType} strike=${strike} spot=${spot} ` +
+      `underlyingOpenPrice=${inputs.underlyingOpenPrice} ` +
+      `intradayBars=${inputs.intradayBars.length} dailyBars=${inputs.priorDailyBars.length} ` +
+      `vix=${inputs.historicalVIX}`
+    );
 
     // 3. Compute DTE
     const msPerDay = 86400000;

@@ -147,6 +147,20 @@ export function priceOption(
 ): number {
   const T = Math.max(dte / 365, 1e-8);
 
+  // Diagnostic logging for debugging put pricing
+  const intrinsic = optionType === "call"
+    ? Math.max(0, spot - strike)
+    : Math.max(0, strike - spot);
+  const sqrtT = Math.sqrt(T);
+  const d1Debug = iv > 0 && spot > 0 && strike > 0
+    ? (Math.log(spot / strike) + (riskFreeRate + 0.5 * iv * iv) * T) / (iv * sqrtT)
+    : NaN;
+  const d2Debug = d1Debug - iv * sqrtT;
+  console.log(
+    `[priceOption] type=${optionType} spot=${spot} strike=${strike} dte=${dte} T=${T.toFixed(6)} iv=${iv.toFixed(4)} r=${riskFreeRate} ` +
+    `d1=${isNaN(d1Debug) ? "NaN" : d1Debug.toFixed(4)} d2=${isNaN(d2Debug) ? "NaN" : d2Debug.toFixed(4)} intrinsic=${intrinsic.toFixed(2)}`
+  );
+
   let price: number;
 
   if (dteBucket === "0DTE" || dte === 0) {
@@ -164,6 +178,7 @@ export function priceOption(
     }
   }
 
+  console.log(`[priceOption] bsPrice=${price.toFixed(4)} final=${Math.max(0.01, price).toFixed(4)}`);
   return Math.max(0.01, price);
 }
 

@@ -108,6 +108,11 @@ export function generateIntradayBars(params: {
     tickerConfig,
   } = params;
 
+  console.log(
+    `[generateIntradayBars] optionType=${optionType} spot=${spot} strike=${strike} dte=${computeDTE(replayDate, expiry)} iv=${iv.toFixed(4)} dteBucket=${dteBucket} ` +
+    `underlyingBars=${intradayBars.length} firstBar=${intradayBars[0]?.open ?? "N/A"} lastBar=${intradayBars[intradayBars.length - 1]?.close ?? "N/A"}`
+  );
+
   if (intradayBars.length === 0) {
     // No bars: return flat line at theoretical price
     const theoretical = priceOption(spot, strike, computeDTE(replayDate, expiry), iv, riskFreeRate, optionType, dteBucket);
