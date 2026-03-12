@@ -1,10 +1,10 @@
 /**
- * Fetches all required historical data from Polygon for pricing.
+ * Fetches all required historical data for pricing.
  *
  * Collects:
- *   - 5-min intraday bars for the underlying on replay date
- *   - 30 prior daily bars for GARCH
- *   - Historical VIX close
+ *   - 5-min intraday bars for the underlying on replay date (Polygon)
+ *   - 30 prior daily bars for GARCH (Polygon)
+ *   - Historical VIX close (Yahoo Finance)
  *   - Risk-free rate from rates table
  *   - Ticker config
  */
@@ -25,17 +25,19 @@ function apiKey(): string {
   return key;
 }
 
-async function polygonFetch<T>(path: string): Promise<T> {
+async function polygonFetch<T>(path: string): Promise<T | null> {
   const separator = path.includes("?") ? "&" : "?";
   const url = `${POLYGON_BASE}${path}${separator}apiKey=${apiKey()}`;
   let res: Response;
   try {
     res = await fetch(url);
-  } catch {
-    throw new Error("Polygon API request failed");
+  } catch (err) {
+    console.warn(`[collectInputs] Polygon network error for ${path}:`, err);
+    return null;
   }
   if (!res.ok) {
-    throw new Error(`Polygon API request failed (${res.status})`);
+    console.warn(`[collectInputs] Polygon returned ${res.status} for ${path}`);
+    return null;
   }
   return res.json() as Promise<T>;
 }
@@ -88,7 +90,7 @@ async function fetchIntradayBars(
 
   try {
     const data = await polygonFetch<PolygonAggResponse>(path);
-    if (!data.results || data.results.length === 0) {
+    if (!data || !data.results || data.results.length === 0) {
       console.log(`[collectInputs] No intraday bars returned for ${ticker} on ${date}`);
       return [];
     }
@@ -122,7 +124,7 @@ async function fetchDailyBars(
 
   try {
     const data = await polygonFetch<PolygonAggResponse>(path);
-    if (!data.results || data.results.length === 0) return [];
+    if (!data || !data.results || data.results.length === 0) return [];
     return data.results.map(toBar);
   } catch (err) {
     console.warn(`[collectInputs] Failed to fetch daily bars for ${ticker}:`, err);
@@ -130,19 +132,78 @@ async function fetchDailyBars(
   }
 }
 
-async function fetchVIX(date: string): Promise<number> {
-  const path = `/v2/aggs/ticker/I:VIX/range/1/day/${date}/${date}?adjusted=true`;
+// ─── VIX via Yahoo Finance ───────────────────────────────────────────
+
+interface YahooChartResponse {
+  chart: {
+    result: Array<{
+      timestamp: number[];
+      indicators: {
+        quote: Array<{
+          close: (number | null)[];
+        }>;
+      };
+    }>;
+  };
+}
+
+/**
+ * Fetch VIX close for a given replay date via Yahoo Finance.
+ * Matches replayDate to the closest prior trading day in the 3-month range.
+ * Returns the raw VIX value (e.g. 18.5) — the engine divides by 100 when using it.
+ * Never throws — always returns a number.
+ */
+async function fetchVIX(replayDate: string): Promise<number> {
+  const DEFAULT_VIX = 20.0;
 
   try {
-    const data = await polygonFetch<PolygonAggResponse>(path);
-    if (data.results && data.results.length > 0) {
-      return data.results[0].c;
-    }
-  } catch (err) {
-    console.warn(`[collectInputs] Failed to fetch VIX:`, err);
-  }
+    const url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=3mo";
+    console.log(`[collectInputs] Fetching VIX from Yahoo Finance for date ${replayDate}`);
 
-  return 20; // safe default: VIX = 20
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[collectInputs] Yahoo Finance returned ${res.status} for VIX`);
+      return DEFAULT_VIX;
+    }
+
+    const data: YahooChartResponse = await res.json();
+    const result = data?.chart?.result?.[0];
+    if (!result || !result.timestamp || !result.indicators?.quote?.[0]?.close) {
+      console.warn("[collectInputs] Yahoo VIX response missing expected fields");
+      return DEFAULT_VIX;
+    }
+
+    const timestamps = result.timestamp;
+    const closes = result.indicators.quote[0].close;
+
+    // Parse replayDate as midnight UTC
+    const targetMs = new Date(replayDate + "T00:00:00Z").getTime();
+
+    // Find the closest prior trading day's VIX close
+    let bestIdx = -1;
+    let bestDiff = Infinity;
+    for (let i = 0; i < timestamps.length; i++) {
+      const tsMs = timestamps[i] * 1000; // Yahoo returns seconds
+      const diff = targetMs - tsMs;
+      // Only consider dates on or before replayDate, pick the closest
+      if (diff >= 0 && diff < bestDiff && closes[i] != null) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0 && closes[bestIdx] != null) {
+      const vix = closes[bestIdx]!;
+      console.log(`[collectInputs] VIX from Yahoo: ${vix} (index ${bestIdx}, ${new Date(timestamps[bestIdx] * 1000).toISOString().slice(0, 10)})`);
+      return vix;
+    }
+
+    console.warn("[collectInputs] No matching VIX date found, using default");
+    return DEFAULT_VIX;
+  } catch (err) {
+    console.warn("[collectInputs] Failed to fetch VIX from Yahoo:", err);
+    return DEFAULT_VIX;
+  }
 }
 
 // ─── Main collection function ────────────────────────────────────────
