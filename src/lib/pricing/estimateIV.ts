@@ -85,7 +85,12 @@ function yangZhangRV(bars: Bar[]): number | null {
 // ─── Method 2: VIX-Anchored IV ──────────────────────────────────────
 
 function vixAnchoredIV(inputs: PricingInputs): number {
-  return (inputs.historicalVIX / 100) * inputs.tickerConfig.volMultiplier;
+  // Guard against 0, undefined, or absurd VIX values poisoning the ensemble
+  const safeVIX =
+    inputs.historicalVIX > 0 && inputs.historicalVIX < 200
+      ? inputs.historicalVIX
+      : 20.0;
+  return (safeVIX / 100) * inputs.tickerConfig.volMultiplier;
 }
 
 // ─── Method 3: GARCH(1,1) ───────────────────────────────────────────
