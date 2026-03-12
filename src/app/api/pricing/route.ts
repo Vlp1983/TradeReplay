@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     // strike
     const strikeNum = Number(strike);
-    if (isNaN(strikeNum) || strikeNum <= 0) {
+    if (isNaN(strikeNum) || strikeNum < 0) {
       return NextResponse.json({ error: "Invalid strike" }, { status: 400 });
     }
 

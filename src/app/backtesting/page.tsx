@@ -59,6 +59,7 @@ export default function BacktestingPage() {
     ) => {
       const optionType = right;
 
+      console.log("[runPricingAndDisplay] Calling fetchPricing:", { ticker, date, strike, expiry: expiry.toISOString(), optionType });
       const pricing = await fetchPricing({
         ticker,
         replayDate: date,
@@ -66,13 +67,13 @@ export default function BacktestingPage() {
         expiry,
         optionType,
       });
+      console.log("[runPricingAndDisplay] Got pricing:", { bars: pricing.bars.length, atmStrike: pricing.strikeChain.atmStrike, iv: pricing.ivUsed });
 
       setLastPricing(pricing);
 
       // Build chain data for the strike picker
-      const spot = pricing.bars.length > 0 ? pricing.bars[0].open / Math.max(0.01, Math.abs(pricing.greeksAtOpen.delta)) : 100;
       const chain = pricingToChainData(
-        ticker as MomentSelection["ticker"],
+        ticker,
         date,
         entryTime,
         pricing,
@@ -83,7 +84,7 @@ export default function BacktestingPage() {
       // Build contract for replay
       const atmPremium = pricing.bars.length > 0 ? pricing.bars[0].open : 1.0;
       const contract: SelectedContract = {
-        ticker: ticker as MomentSelection["ticker"],
+        ticker,
         date,
         entryTime,
         expiration: pricing.classification.dteBucket === "0DTE" ? "0dte" : "friday",
@@ -94,6 +95,7 @@ export default function BacktestingPage() {
       };
 
       const result = pricingToReplayResult(contract, pricing);
+      console.log("[runPricingAndDisplay] ReplayResult:", { points: result.sameDayPoints.length, entryPremium: result.metrics.entryPremium, exitPL: result.metrics.exitAtClosePL });
       setReplayResult(result);
       setStep("replay");
 
@@ -144,12 +146,14 @@ export default function BacktestingPage() {
         return;
       }
 
+      console.log("[handleLoadChain] Selection:", selection);
       setMoment(selection);
       setLoadingChain(true);
       setReplayResult(null);
 
       try {
         const expiry = resolveDefaultExpiry(selection.date);
+        console.log("[handleLoadChain] Default expiry:", expiry.toISOString());
         setCurrentExpiry(expiry);
 
         // First call: get pricing for ATM strike (use 0 as placeholder, engine will snap)
@@ -163,6 +167,7 @@ export default function BacktestingPage() {
         });
 
         const atmStrike = initPricing.strikeChain.atmStrike;
+        console.log("[handleLoadChain] ATM strike resolved:", atmStrike);
         setLastPricing(initPricing);
         setCurrentExpiry(expiry);
 
