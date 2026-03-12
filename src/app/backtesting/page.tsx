@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -31,99 +31,152 @@ import {
 type Step = "moment" | "chain" | "replay";
 
 export default function BacktestingPage() {
-  const [step, setStep] = useState<Step>("moment");
-  const [chainData, setChainData] = useState<ChainData | null>(null);
-  const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
-  const [loadingChain, setLoadingChain] = useState(false);
-  const [loadingReplay, setLoadingReplay] = useState(false);
+  // ─── Core pricing params (changes trigger re-pricing via useEffect) ──
   const [moment, setMoment] = useState<MomentSelection | null>(null);
   const [selectedRight, setSelectedRight] = useState<Right>("call");
-  const [showPaywall, setShowPaywall] = useState(false);
-  // Cache the latest pricing result for re-use when toggling right / picking strikes
-  const [lastPricing, setLastPricing] = useState<OptionPricingResult | null>(null);
   const [currentExpiry, setCurrentExpiry] = useState<Date | null>(null);
+  const [selectedStrike, setSelectedStrike] = useState<number>(0); // 0 = auto-resolve ATM
+
+  // ─── Results & cache ──────────────────────────────────────────────
+  const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+  const [chainData, setChainData] = useState<ChainData | null>(null);
+  const [lastPricing, setLastPricing] = useState<OptionPricingResult | null>(null);
   const [availableExpiries, setAvailableExpiries] = useState<ExpiryOption[]>([]);
-  const [loadingExpiry, setLoadingExpiry] = useState(false);
+
+  // ─── UI state ─────────────────────────────────────────────────────
+  const [step, setStep] = useState<Step>("moment");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showPaywall, setShowPaywall] = useState(false);
 
   const { checkAndIncrement, isLimitReached, limitReason } = useGate();
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
+  const fetchIdRef = useRef(0);
+  const scrollOnNextResult = useRef(false);
 
-  /** Run the pricing engine and display results */
-  const runPricingAndDisplay = useCallback(
-    async (
-      ticker: string,
-      date: string,
-      entryTime: string,
-      strike: number,
-      expiry: Date,
-      right: Right
-    ) => {
-      const optionType = right;
+  // Derive stable primitives for useEffect deps (avoids object reference issues)
+  const ticker = moment?.ticker;
+  const date = moment?.date;
+  const entryTime = moment?.entryTime;
+  const expiryMs = currentExpiry?.getTime() ?? null;
 
-      console.log("[runPricingAndDisplay] Calling fetchPricing:", { ticker, date, strike, expiry: expiry.toISOString(), optionType });
-      const pricing = await fetchPricing({
-        ticker,
-        replayDate: date,
-        strike,
-        expiry,
-        optionType,
-      });
-      console.log("[runPricingAndDisplay] Got pricing:", { bars: pricing.bars.length, atmStrike: pricing.strikeChain.atmStrike, iv: pricing.ivUsed });
+  // ─── Core pricing effect (300ms debounce) ──────────────────────────
+  //
+  // All pricing calls flow through this single effect. Event handlers
+  // just set state; this effect reacts to changes and fetches new data.
+  // A fetchId counter prevents stale responses from overwriting newer ones.
+  //
+  useEffect(() => {
+    if (!ticker || !date || !entryTime || expiryMs == null) return;
 
-      setLastPricing(pricing);
+    const id = ++fetchIdRef.current;
+    const expiry = new Date(expiryMs);
 
-      // Store available expiries for the UI chips
-      const expOpts: ExpiryOption[] = pricing.expiries.map((e) => ({
-        date: e.date instanceof Date ? e.date.toISOString() : String(e.date),
-        label: e.label,
-        dte: e.dte,
-        type: e.type,
-      }));
-      setAvailableExpiries(expOpts);
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
 
-      // Build chain data for the strike picker
-      const chain = pricingToChainData(
-        ticker,
-        date,
-        entryTime,
-        pricing,
-        pricing.strikeChain.atmStrike // use ATM as underlying proxy
-      );
-      setChainData(chain);
-
-      // Build contract for replay
-      const atmPremium = pricing.bars.length > 0 ? pricing.bars[0].open : 1.0;
-      const contract: SelectedContract = {
-        ticker,
-        date,
-        entryTime,
-        expiration: pricing.classification.dteBucket === "0DTE" ? "0dte" : "friday",
-        strike,
-        right,
-        entryPremium: +atmPremium.toFixed(2),
-        confidence: "Med",
-      };
-
-      const result = pricingToReplayResult(contract, pricing);
-      console.log("[runPricingAndDisplay] ReplayResult:", { points: result.sameDayPoints.length, entryPremium: result.metrics.entryPremium, exitPL: result.metrics.exitAtClosePL });
-      setReplayResult(result);
-      setStep("replay");
-
-      setTimeout(() => {
-        replayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 100);
-
-      // Fetch AI insights asynchronously
-      const prices = result.sameDayPoints.map((p) => p.price);
       try {
-        const insightsResult = await fetchInsights({
+        let strike = selectedStrike;
+
+        // Resolve ATM strike if needed (0 = "auto-ATM")
+        if (strike === 0) {
+          console.log("[pricing-effect] Resolving ATM strike...");
+          const probe = await fetchPricing({
+            ticker,
+            replayDate: date,
+            strike: 0,
+            expiry,
+            optionType: selectedRight,
+          });
+          if (id !== fetchIdRef.current) return; // stale
+          strike = probe.strikeChain.atmStrike;
+          console.log("[pricing-effect] ATM resolved:", strike);
+        }
+
+        // Main pricing call with resolved strike
+        console.log("[pricing-effect] Fetching:", {
+          ticker,
+          strike,
+          right: selectedRight,
+          expiry: expiry.toISOString(),
+        });
+        const pricing = await fetchPricing({
+          ticker,
+          replayDate: date,
+          strike,
+          expiry,
+          optionType: selectedRight,
+        });
+        if (id !== fetchIdRef.current) return; // stale
+
+        // ─── Process results ────────────────────────────────────────
+        setLastPricing(pricing);
+
+        // Available expiries for UI chips
+        const expOpts: ExpiryOption[] = pricing.expiries.map((e) => ({
+          date: e.date instanceof Date ? e.date.toISOString() : String(e.date),
+          label: e.label,
+          dte: e.dte,
+          type: e.type,
+        }));
+        setAvailableExpiries(expOpts);
+
+        // Chain data for strike picker
+        const chain = pricingToChainData(
+          ticker,
+          date,
+          entryTime,
+          pricing,
+          pricing.strikeChain.atmStrike
+        );
+        setChainData(chain);
+
+        // Replay result
+        const atmPremium =
+          pricing.bars.length > 0 ? pricing.bars[0].open : 1.0;
+        const contract: SelectedContract = {
+          ticker,
+          date,
+          entryTime,
+          expiration:
+            pricing.classification.dteBucket === "0DTE" ? "0dte" : "friday",
+          strike,
+          right: selectedRight,
+          entryPremium: +atmPremium.toFixed(2),
+          confidence: "Med",
+        };
+
+        const result = pricingToReplayResult(contract, pricing);
+        console.log("[pricing-effect] Result:", {
+          bars: result.sameDayPoints.length,
+          entry: result.metrics.entryPremium,
+          exitPL: result.metrics.exitAtClosePL,
+        });
+        setReplayResult(result);
+        setStep("replay");
+
+        // Scroll to replay section on initial load
+        if (scrollOnNextResult.current) {
+          scrollOnNextResult.current = false;
+          setTimeout(() => {
+            replayRef.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }, 100);
+        }
+
+        // ─── Fetch insights async (non-blocking, fire-and-forget) ───
+        const prices = result.sameDayPoints.map((p) => p.price);
+        fetchInsights({
           ticker,
           date,
           entryTime,
           strike,
-          right,
+          right: selectedRight,
           entryPremium: contract.entryPremium,
           exitPL: result.metrics.exitAtClosePL,
           exitPLPct: result.metrics.exitAtClosePLPct,
@@ -136,105 +189,70 @@ export default function BacktestingPage() {
           underlyingEnd: prices[prices.length - 1] ?? 0,
           underlyingHigh: prices.length > 0 ? Math.max(...prices) : 0,
           underlyingLow: prices.length > 0 ? Math.min(...prices) : 0,
-        });
-
-        if (insightsResult.insights.length > 0) {
-          setReplayResult((prev) =>
-            prev ? { ...prev, insights: insightsResult.insights, insightsSource: insightsResult.source } : prev
-          );
+        })
+          .then((insightsResult) => {
+            if (id !== fetchIdRef.current) return;
+            if (insightsResult.insights.length > 0) {
+              setReplayResult((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      insights: insightsResult.insights,
+                      insightsSource: insightsResult.source,
+                    }
+                  : prev
+              );
+            }
+          })
+          .catch(() => {});
+      } catch (err) {
+        if (id !== fetchIdRef.current) return;
+        console.error("[pricing-effect] Error:", err);
+        setError("Failed to load pricing data. Please try again.");
+      } finally {
+        if (id === fetchIdRef.current) {
+          setLoading(false);
         }
-      } catch {
-        // non-critical
       }
-    },
-    []
-  );
+    }, 300);
 
-  /** Initial load: fetch pricing for ATM call at default expiry */
+    return () => clearTimeout(timer);
+  }, [ticker, date, entryTime, selectedRight, expiryMs, selectedStrike]);
+
+  // ─── Event handlers (set state only — useEffect handles fetching) ──
+
+  /** Initial load from MomentPicker */
   const handleLoadChain = useCallback(
-    async (selection: MomentSelection) => {
+    (selection: MomentSelection) => {
       if (!checkAndIncrement()) {
         setShowPaywall(true);
         return;
       }
-
-      console.log("[handleLoadChain] Selection:", selection);
+      console.log("[handleLoadChain]", selection);
       setMoment(selection);
-      setLoadingChain(true);
+      setCurrentExpiry(resolveDefaultExpiry(selection.date));
+      setSelectedStrike(0); // ATM
       setReplayResult(null);
-
-      try {
-        const expiry = resolveDefaultExpiry(selection.date);
-        console.log("[handleLoadChain] Default expiry:", expiry.toISOString());
-        setCurrentExpiry(expiry);
-
-        // First call: get pricing for ATM strike (use 0 as placeholder, engine will snap)
-        // We need the ATM strike first — fetch a quick pricing to get strikeChain
-        const initPricing = await fetchPricing({
-          ticker: selection.ticker,
-          replayDate: selection.date,
-          strike: 0, // will be resolved to ATM by the engine's fallback
-          expiry,
-          optionType: selectedRight,
-        });
-
-        const atmStrike = initPricing.strikeChain.atmStrike;
-        console.log("[handleLoadChain] ATM strike resolved:", atmStrike);
-        setLastPricing(initPricing);
-        setCurrentExpiry(expiry);
-
-        // Now fetch the real ATM pricing
-        await runPricingAndDisplay(
-          selection.ticker,
-          selection.date,
-          selection.entryTime,
-          atmStrike,
-          expiry,
-          selectedRight
-        );
-      } catch (err) {
-        console.error("[handleLoadChain] Error:", err);
-      } finally {
-        setLoadingChain(false);
-        setLoadingReplay(false);
-      }
+      setError(null);
+      scrollOnNextResult.current = true;
     },
-    [selectedRight, checkAndIncrement, runPricingAndDisplay]
+    [checkAndIncrement]
   );
 
-  /** Toggle call/put: re-run pricing for same strike with new direction */
-  const handleToggleRight = useCallback(
-    async (right: Right) => {
-      setSelectedRight(right);
-      if (!moment || !currentExpiry) return;
+  /** Toggle call/put — immediate visual feedback, useEffect re-prices */
+  const handleToggleRight = useCallback((right: Right) => {
+    setSelectedRight(right);
+  }, []);
 
-      const strike = lastPricing?.strikeChain.atmStrike ?? replayResult?.contract.strike;
-      if (!strike) return;
+  /** Expiry change from replay chips (receives a Date) */
+  const handleExpiryChange = useCallback((expiryDate: Date) => {
+    setCurrentExpiry(expiryDate);
+  }, []);
 
-      setLoadingReplay(true);
-      try {
-        await runPricingAndDisplay(
-          moment.ticker,
-          moment.date,
-          moment.entryTime,
-          strike,
-          currentExpiry,
-          right
-        );
-      } finally {
-        setLoadingReplay(false);
-      }
-    },
-    [moment, currentExpiry, lastPricing, replayResult, runPricingAndDisplay]
-  );
-
-  /** Expiration change from chain snapshot */
+  /** Expiration change from chain snapshot (converts Expiration → Date) */
   const handleExpirationChange = useCallback(
-    async (exp: Expiration) => {
+    (exp: Expiration) => {
       if (!moment) return;
-      setLoadingChain(true);
-
-      // Resolve expiry date from the Expiration mode
       const refDate = new Date(moment.date + "T12:00:00Z");
       let expiry: Date;
       if (exp === "0dte") {
@@ -246,69 +264,16 @@ export default function BacktestingPage() {
         expiry.setUTCDate(expiry.getUTCDate() + daysToFriday);
       }
       setCurrentExpiry(expiry);
-
-      try {
-        const strike = lastPricing?.strikeChain.atmStrike ?? 0;
-        await runPricingAndDisplay(
-          moment.ticker,
-          moment.date,
-          moment.entryTime,
-          strike,
-          expiry,
-          selectedRight
-        );
-        setStep("chain");
-      } finally {
-        setLoadingChain(false);
-      }
     },
-    [moment, lastPricing, selectedRight, runPricingAndDisplay]
+    [moment]
   );
 
-  /** Expiry change from the replay view expiry chips */
-  const handleReplayExpiryChange = useCallback(
-    async (expiryDate: Date) => {
-      if (!moment) return;
-      setLoadingExpiry(true);
-      setCurrentExpiry(expiryDate);
-
-      try {
-        const strike = lastPricing?.strikeChain.atmStrike ?? replayResult?.contract.strike ?? 0;
-        await runPricingAndDisplay(
-          moment.ticker,
-          moment.date,
-          moment.entryTime,
-          strike,
-          expiryDate,
-          selectedRight
-        );
-      } finally {
-        setLoadingExpiry(false);
-      }
-    },
-    [moment, lastPricing, replayResult, selectedRight, runPricingAndDisplay]
-  );
-
-  /** User selects a specific contract from the chain snapshot */
-  const handleReplayContract = useCallback(
-    async (contract: SelectedContract) => {
-      if (!moment || !currentExpiry) return;
-      setLoadingReplay(true);
-      try {
-        await runPricingAndDisplay(
-          contract.ticker,
-          contract.date,
-          contract.entryTime,
-          contract.strike,
-          currentExpiry,
-          contract.right
-        );
-      } finally {
-        setLoadingReplay(false);
-      }
-    },
-    [moment, currentExpiry, runPricingAndDisplay]
-  );
+  /** User picks a specific strike from the chain snapshot */
+  const handleReplayContract = useCallback((contract: SelectedContract) => {
+    setSelectedStrike(contract.strike);
+    setSelectedRight(contract.right);
+    scrollOnNextResult.current = true;
+  }, []);
 
   const handlePickAnother = useCallback(() => {
     setStep("chain");
@@ -332,9 +297,14 @@ export default function BacktestingPage() {
     setMoment(null);
     setLastPricing(null);
     setCurrentExpiry(null);
+    setSelectedStrike(0);
     setAvailableExpiries([]);
+    setError(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
+
+  // Show "Loading..." in MomentPicker only during the first load (no prior results)
+  const isInitialLoading = loading && !lastPricing;
 
   return (
     <>
@@ -368,7 +338,7 @@ export default function BacktestingPage() {
             {/* Step 1 — always visible */}
             <MomentPicker
               onLoadChain={handleLoadChain}
-              loading={loadingChain}
+              loading={isInitialLoading}
               selectedRight={selectedRight}
               onRightChange={handleToggleRight}
             />
@@ -389,7 +359,7 @@ export default function BacktestingPage() {
                       onExpirationChange={handleExpirationChange}
                       onReplayContract={handleReplayContract}
                       onBackToReplay={replayResult ? handleBackToReplay : undefined}
-                      loading={loadingReplay}
+                      loading={loading}
                     />
                   </motion.div>
                 )}
@@ -410,10 +380,12 @@ export default function BacktestingPage() {
                       onNewBacktest={handleNewBacktest}
                       onPickAnother={handlePickAnother}
                       onToggleRight={handleToggleRight}
+                      selectedRight={selectedRight}
                       availableExpiries={availableExpiries}
                       selectedExpiryISO={currentExpiry?.toISOString()}
-                      onExpiryChange={handleReplayExpiryChange}
-                      loadingExpiry={loadingExpiry}
+                      onExpiryChange={handleExpiryChange}
+                      loading={loading}
+                      error={error}
                     />
                   </motion.div>
                 )}
