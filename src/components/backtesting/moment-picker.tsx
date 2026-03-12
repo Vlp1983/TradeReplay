@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { TrendingUp, Calendar, Clock, ArrowUpRight, ArrowDownRight, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MomentSelection, Right } from "@/lib/engine/types";
-import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay, getLastTradingDay } from "@/lib/engine/dates";
+import { getRecentTradingDays, getEntryTimeSlots, formatDateDisplay } from "@/lib/engine/dates";
 import { getAllTickers } from "@/lib/pricing/config/tickers";
 import { getTickerLabel } from "@/lib/pricing/config/tickerNames";
 
@@ -48,19 +48,29 @@ interface MomentPickerProps {
 }
 
 export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChange }: MomentPickerProps) {
-  const defaultDate = useMemo(() => getLastTradingDay(), []);
+  // Compute tradingDays first so we can derive the default date from it,
+  // ensuring they always agree (avoids SSR/client timezone mismatch).
+  const tradingDays = useMemo(() => getRecentTradingDays(42), []); // ~60 calendar days of weekdays
+  const timeSlots = useMemo(() => getEntryTimeSlots(), []);
+
   const [ticker, setTicker] = useState("");
   const [query, setQuery] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
-  const [date, setDate] = useState(defaultDate);
+  const [date, setDate] = useState(() => tradingDays[0] ?? "");
   const [entryTime, setEntryTime] = useState("10:00");
   const [recentTickers, setRecentTickers] = useState<string[]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const tradingDays = useMemo(() => getRecentTradingDays(42), []); // ~60 calendar days of weekdays
-  const timeSlots = useMemo(() => getEntryTimeSlots(), []);
+  // Hydration safety: if SSR date doesn't match any client-side trading day,
+  // snap to the first available trading day.
+  useEffect(() => {
+    if (tradingDays.length > 0 && (!date || !tradingDays.includes(date))) {
+      console.log("[MomentPicker] Snapping date to", tradingDays[0], "(was:", date, ")");
+      setDate(tradingDays[0]);
+    }
+  }, [tradingDays, date]);
 
   // Load recent tickers on mount
   useEffect(() => {
@@ -113,8 +123,13 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const canSubmit = ticker && date && entryTime && !loading;
+  const canSubmit = !!ticker && !!date && !!entryTime && !loading;
   const isCall = selectedRight === "call";
+
+  // Debug: log why button might be disabled
+  if (!canSubmit) {
+    console.log("[MomentPicker] canSubmit=false:", { ticker: !!ticker, date: !!date, entryTime: !!entryTime, loading });
+  }
 
   function handleSubmit() {
     if (!canSubmit) return;
