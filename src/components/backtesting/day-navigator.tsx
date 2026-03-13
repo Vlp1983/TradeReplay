@@ -93,26 +93,26 @@ export function DayNavigator({
 
   return (
     <div
-      className="flex items-stretch gap-1"
+      className="flex items-center gap-2"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Left arrow */}
+      {/* Left arrow — fixed 32px */}
       <button
         onClick={slideLeft}
         disabled={!canSlideLeft || loading}
-        className="shrink-0 flex items-center rounded-md px-1.5 text-text-muted hover:text-text-primary hover:bg-surface disabled:opacity-20 disabled:pointer-events-none transition-colors"
+        className="flex h-12 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-surface disabled:opacity-20 disabled:pointer-events-none transition-colors"
         aria-label="Previous days"
       >
         <ChevronLeft className="h-4 w-4" />
       </button>
 
-      {/* Day buttons — fixed-width grid */}
-      <div className="grid flex-1 gap-1" style={{ gridTemplateColumns: `repeat(${MAX_VISIBLE}, minmax(0, 1fr))` }}>
+      {/* Day buttons — fixed width */}
+      <div className="flex gap-2">
         {slots.map((day, idx) => {
           if (!day) {
-            // Empty placeholder slot
-            return <div key={`empty-${idx}`} className="min-w-0" />;
+            // Empty placeholder — same fixed size
+            return <div key={`empty-${idx}`} className="h-12 w-20" />;
           }
 
           const isActive = day === viewedDate;
@@ -121,7 +121,7 @@ export function DayNavigator({
           const isFuture = day >= today;
 
           // Sub-label
-          let subLabel: string | null = null;
+          let subLabel: string;
           if (isEntry) subLabel = "Entry";
           else if (isExpiry) subLabel = "Exp";
           else subLabel = "Trading Day";
@@ -131,7 +131,7 @@ export function DayNavigator({
               key={day}
               onClick={() => onDayChange(day)}
               disabled={loading}
-              className={`min-w-0 flex flex-col items-center rounded-lg py-1.5 text-[12px] font-medium transition-all ${
+              className={`flex h-12 w-20 shrink-0 flex-col items-center justify-center rounded-lg transition-all ${
                 isActive
                   ? "bg-accent text-white shadow-sm"
                   : isFuture
@@ -141,30 +141,28 @@ export function DayNavigator({
                 isExpiry && !isActive && !isEntry ? "ring-1 ring-inset ring-amber-500/40" : ""
               }`}
             >
-              <span className="truncate">{formatDayLabel(day)}</span>
-              {subLabel && (
-                <span className={`text-[8px] uppercase tracking-wide ${
-                  isActive
-                    ? "text-white/70"
-                    : isEntry
-                      ? "text-accent/70"
-                      : isExpiry
-                        ? "text-amber-400/70"
-                        : "text-text-muted/50"
-                }`}>
-                  {subLabel}
-                </span>
-              )}
+              <span className="text-[12px] font-medium leading-tight">{formatDayLabel(day)}</span>
+              <span className={`text-[10px] leading-tight ${
+                isActive
+                  ? "text-white/70"
+                  : isEntry
+                    ? "text-accent/70"
+                    : isExpiry
+                      ? "text-amber-400/70"
+                      : "text-text-muted/50"
+              }`}>
+                {subLabel}
+              </span>
             </button>
           );
         })}
       </div>
 
-      {/* Right arrow */}
+      {/* Right arrow — fixed 32px */}
       <button
         onClick={slideRight}
         disabled={!canSlideRight || loading}
-        className="shrink-0 flex items-center rounded-md px-1.5 text-text-muted hover:text-text-primary hover:bg-surface disabled:opacity-20 disabled:pointer-events-none transition-colors"
+        className="flex h-12 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-surface disabled:opacity-20 disabled:pointer-events-none transition-colors"
         aria-label="Next days"
       >
         <ChevronRight className="h-4 w-4" />

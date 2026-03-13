@@ -104,14 +104,6 @@ export async function generateOptionPricing(params: {
       console.warn(`[generateOptionPricing] No price data available, using strike as spot fallback: ${spot}`);
     }
 
-    console.log(
-      `[generateOptionPricing] ticker=${ticker} date=${replayDate.toISOString().slice(0, 10)} ` +
-      `optionType=${optionType} strike=${strike} spot=${spot} ` +
-      `underlyingOpenPrice=${inputs.underlyingOpenPrice} ` +
-      `intradayBars=${inputs.intradayBars.length} dailyBars=${inputs.priorDailyBars.length} ` +
-      `vix=${inputs.historicalVIX}`
-    );
-
     // 3. Compute DTE
     const msPerDay = 86400000;
     const dte = Math.max(

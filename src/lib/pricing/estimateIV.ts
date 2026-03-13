@@ -225,8 +225,6 @@ export function estimateIV(
   const m2 = vixAnchoredIV(inputs);
   const m3 = garchIV(inputs.priorDailyBars);
   const m4 = historicalPercentileIV(inputs.priorDailyBars, m1);
-  console.log(`[estimateIV] Methods: YZ-RV=${m1?.toFixed(4) ?? "null"}, VIX-anchor=${m2.toFixed(4)}, GARCH=${m3?.toFixed(4) ?? "null"}, HistPctl=${m4?.toFixed(4) ?? "null"} (intradayBars=${inputs.intradayBars.length}, dailyBars=${inputs.priorDailyBars.length}, VIX=${inputs.historicalVIX})`);
-
   // Get base weights
   const key = getWeightKey(classification);
   const baseWeights = [...ENSEMBLE_WEIGHTS[key]];
@@ -269,6 +267,5 @@ export function estimateIV(
 
   // Hard cap: [0.05, 3.00]
   const finalIV = Math.max(0.05, Math.min(3.0, iv));
-  console.log(`[estimateIV] Final ensemble IV: ${finalIV.toFixed(4)} (key=${key})`);
   return finalIV;
 }

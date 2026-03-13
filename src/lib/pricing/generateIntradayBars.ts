@@ -160,11 +160,6 @@ export function generateIntradayBars(params: {
   } = params;
   let { intradayBars } = params;
 
-  console.log(
-    `[generateIntradayBars] optionType=${optionType} spot=${spot} strike=${strike} dte=${computeDTE(replayDate, expiry)} iv=${iv.toFixed(4)} dteBucket=${dteBucket} ` +
-    `underlyingBars=${intradayBars.length} firstBar=${intradayBars[0]?.open ?? "N/A"} lastBar=${intradayBars[intradayBars.length - 1]?.close ?? "N/A"}`
-  );
-
   // Seed deterministic RNG (do this BEFORE synthetic bar generation so seed is consistent)
   // Use date-only strings (not full ISO) + optionType so the seed is stable across calls
   // and different for calls vs puts
@@ -200,8 +195,6 @@ export function generateIntradayBars(params: {
     optionType,
     dteBucket
   );
-  console.log(`[generateIntradayBars] spot=${spot}, strike=${strike}, dte=${dte}, iv=${iv.toFixed(4)}, openPrice=${openPrice.toFixed(4)}, bars=${n}`);
-
   const optionBars: OptionBar[] = [];
   let currentPrice = openPrice;
   let zeroDeltaCount = 0;
@@ -233,18 +226,6 @@ export function generateIntradayBars(params: {
       const firstBarDelta = greeks.delta * underlyingDollarMove;
       const barOpen = openPrice;
       const barClose = Math.max(0.01, openPrice + firstBarDelta);
-      // Log first 3 bars to verify direction
-      console.log('[bar direction check]', {
-        i,
-        optionType,
-        underlyingOpen: bar.open,
-        underlyingClose: bar.close,
-        underlyingDollarMove,
-        delta: greeks.delta,
-        deltaMove: firstBarDelta,
-        prevOptionPrice: openPrice,
-        newOptionPrice: barClose,
-      });
       optionBars.push({
         timestamp: bar.timestamp,
         open: +barOpen.toFixed(2),
@@ -269,21 +250,6 @@ export function generateIntradayBars(params: {
     // For puts: delta < 0 → underlying up → option down
     // NO sign flip, NO Math.abs() — delta already has the correct sign
     const deltaMove = greeks.delta * underlyingDollarMove;
-
-    // Log first 3 bars to verify direction
-    if (i < 3) {
-      console.log('[bar direction check]', {
-        i,
-        optionType,
-        underlyingOpen: bar.open,
-        underlyingClose: bar.close,
-        underlyingDollarMove,
-        delta: greeks.delta,
-        deltaMove,
-        prevOptionPrice: currentPrice,
-        newOptionPrice: currentPrice + deltaMove,
-      });
-    }
 
     if (deltaMove === 0 && i <= 5) {
       zeroDeltaCount++;
@@ -340,20 +306,12 @@ export function generateIntradayBars(params: {
     );
   }
 
-  console.log(`[generateIntradayBars] Output: ${optionBars.length} bars, first open=${optionBars[0]?.open}, last close=${optionBars[optionBars.length - 1]?.close}`);
-
   // Sanity check: verify put/call directional behavior
   if (optionBars.length >= 2 && intradayBars.length >= 2) {
     const firstBarClose = optionBars[0].close;
     const lastBarClose = optionBars[optionBars.length - 1].close;
     const optionMove = lastBarClose - firstBarClose;
     const underlyingMove = intradayBars[intradayBars.length - 1].close - intradayBars[0].open;
-    console.log('[sanity check]', {
-      optionType,
-      underlyingMoveTotal: underlyingMove.toFixed(2),
-      optionMoveTotal: optionMove.toFixed(4),
-      expectedDirection: optionType === 'call' ? 'same as underlying' : 'opposite',
-    });
   }
 
   return optionBars;

@@ -155,6 +155,19 @@ export function ContractReplay({
     return `${month} ${day}`;
   }, [viewedDate, contract.date]);
 
+  // Convert entry time "10:00" → "10:00 AM" for the chart reference line
+  const entryTimeLabel = useMemo(() => {
+    const et = contract.entryTime;
+    if (!et) return undefined;
+    const [hStr, mStr] = et.split(":");
+    let h = parseInt(hStr, 10);
+    const m = mStr;
+    const suffix = h >= 12 ? "PM" : "AM";
+    if (h === 0) h = 12;
+    else if (h > 12) h -= 12;
+    return `${h}:${m} ${suffix}`;
+  }, [contract.entryTime]);
+
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
       {/* Header */}
@@ -329,6 +342,7 @@ export function ContractReplay({
               points={underlyingPoints}
               ticker={contract.ticker}
               dateLabel={underlyingDateLabel}
+              entryTimeLabel={entryTimeLabel}
             />
           </div>
         )}

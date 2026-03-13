@@ -77,7 +77,6 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
   // snap to the first available trading day.
   useEffect(() => {
     if (tradingDays.length > 0 && (!date || !tradingDays.includes(date))) {
-      console.log("[MomentPicker] Snapping date to", tradingDays[0], "(was:", date, ")");
       setDate(tradingDays[0]);
     }
   }, [tradingDays, date]);
@@ -121,7 +120,6 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
     setShowDropdown(false);
     saveRecentTicker(t);
     setRecentTickers(getRecentTickers());
-    console.log("[MomentPicker] Ticker selected:", t);
   }, []);
 
   // Close dropdown on outside click
@@ -143,14 +141,8 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
   const canSubmit = !!ticker && !!date && !!entryTime && !loading;
   const isCall = selectedRight === "call";
 
-  // Debug: log why button might be disabled
-  if (!canSubmit) {
-    console.log("[MomentPicker] canSubmit=false:", { ticker: !!ticker, date: !!date, entryTime: !!entryTime, loading });
-  }
-
   function handleSubmit() {
     if (!canSubmit) return;
-    console.log("[MomentPicker] Submitting:", { ticker, date, entryTime });
     onLoadChain({ ticker, date, entryTime });
   }
 

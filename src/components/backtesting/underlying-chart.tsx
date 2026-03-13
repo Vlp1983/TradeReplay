@@ -9,6 +9,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
 } from "recharts";
 
 export interface UnderlyingPoint {
@@ -23,6 +24,8 @@ interface UnderlyingChartProps {
   ticker: string;
   /** e.g. "Feb 27" */
   dateLabel: string;
+  /** Entry time label for the vertical reference line (e.g. "10:00 AM") */
+  entryTimeLabel?: string;
 }
 
 interface TooltipPayloadEntry {
@@ -56,7 +59,39 @@ function UnderlyingTooltip({ active, payload, label }: ChartTooltipProps) {
   );
 }
 
-export function UnderlyingChart({ points, ticker, dateLabel }: UnderlyingChartProps) {
+/**
+ * Generate full trading day time slots (9:30 AM - 3:55 PM ET, 5-min intervals).
+ * Returns labels matching the format used by underlying points.
+ */
+function generateFullDayLabels(): string[] {
+  const labels: string[] = [];
+  // 9:30 AM to 3:55 PM = 78 bars
+  for (let h = 9; h <= 15; h++) {
+    const startMin = h === 9 ? 30 : 0;
+    const endMin = h === 15 ? 55 : 55;
+    for (let m = startMin; m <= endMin; m += 5) {
+      let h12 = h;
+      const suffix = h12 >= 12 ? "PM" : "AM";
+      if (h12 === 0) h12 = 12;
+      else if (h12 > 12) h12 -= 12;
+      labels.push(`${h12}:${m.toString().padStart(2, "0")} ${suffix}`);
+    }
+  }
+  return labels;
+}
+
+export function UnderlyingChart({ points, ticker, dateLabel, entryTimeLabel }: UnderlyingChartProps) {
+  // Build full-day data: fill gaps with null so the chart shows 9:30-3:55
+  const fullDayData = useMemo(() => {
+    if (!points.length) return [];
+    const labelMap = new Map(points.map((p) => [p.label, p.underlyingPrice]));
+    const allLabels = generateFullDayLabels();
+    return allLabels.map((label) => ({
+      label,
+      underlyingPrice: labelMap.get(label) ?? null,
+    }));
+  }, [points]);
+
   const { yMin, yMax } = useMemo(() => {
     if (!points.length) return { yMin: 0, yMax: 100 };
     const prices = points.map((p) => p.underlyingPrice);
@@ -75,7 +110,7 @@ export function UnderlyingChart({ points, ticker, dateLabel }: UnderlyingChartPr
       </p>
       <ResponsiveContainer width="100%" height={160}>
         <LineChart
-          data={points}
+          data={fullDayData}
           margin={{ top: 4, right: 8, bottom: 4, left: 8 }}
         >
           <CartesianGrid
@@ -100,12 +135,31 @@ export function UnderlyingChart({ points, ticker, dateLabel }: UnderlyingChartPr
             width={56}
           />
           <Tooltip content={<UnderlyingTooltip />} />
+
+          {/* Entry time vertical reference line */}
+          {entryTimeLabel && (
+            <ReferenceLine
+              x={entryTimeLabel}
+              stroke="#3B82F6"
+              strokeWidth={1}
+              strokeDasharray="4 3"
+              label={{
+                value: "Entry",
+                position: "top",
+                fill: "#3B82F6",
+                fontSize: 10,
+                fontWeight: 600,
+              }}
+            />
+          )}
+
           <Line
             type="monotone"
             dataKey="underlyingPrice"
             stroke="rgba(255,255,255,0.7)"
             strokeWidth={1.5}
             dot={false}
+            connectNulls
             activeDot={{
               r: 3,
               stroke: "rgba(255,255,255,0.5)",

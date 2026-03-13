@@ -95,6 +95,16 @@ export default function BacktestingPage() {
     return () => { setLoading(false); };
   }, []);
 
+  // Safety: if loading has been true for 15s with no result, force reset
+  useEffect(() => {
+    if (!loading) return;
+    const timeout = setTimeout(() => {
+      setLoading(false);
+      setError("Request timed out. Please try again.");
+    }, 15000);
+    return () => clearTimeout(timeout);
+  }, [loading]);
+
   // Derive stable primitives for useEffect deps (avoids object reference issues)
   const ticker = moment?.ticker;
   const date = moment?.date;
@@ -212,7 +222,6 @@ export default function BacktestingPage() {
 
         // Resolve ATM strike if needed (0 = "auto-ATM")
         if (strike === 0) {
-          console.log("[pricing-effect] Resolving ATM strike...");
           const probe = await fetchPricing({
             ticker: freshTicker,
             replayDate: freshDate,
@@ -222,16 +231,9 @@ export default function BacktestingPage() {
           });
           if (id !== mainFetchId.current) return;
           strike = probe.strikeChain.atmStrike;
-          console.log("[pricing-effect] ATM resolved:", strike);
         }
 
         // Main pricing call with resolved strike
-        console.log("[pricing-effect] Fetching:", {
-          ticker: freshTicker,
-          strike,
-          right: freshRight,
-          expiry: freshExpiry.toISOString(),
-        });
         const pricing = await fetchPricing({
           ticker: freshTicker,
           replayDate: freshDate,
@@ -279,11 +281,6 @@ export default function BacktestingPage() {
         };
 
         const result = pricingToReplayResult(contract, pricing);
-        console.log("[pricing-effect] Result:", {
-          bars: result.sameDayPoints.length,
-          entry: result.metrics.entryPremium,
-          exitPL: result.metrics.exitAtClosePL,
-        });
         if (id !== mainFetchId.current) return;
         setReplayResult(result);
         setError(null);
@@ -449,7 +446,6 @@ export default function BacktestingPage() {
   const handleViewedDateChange = useCallback(
     async (newDate: string) => {
       setViewedDate(newDate);
-      console.log("[dayNav] fetching day:", newDate);
 
       // Clear underlying overlay when switching days
       setUnderlyingPoints([]);
@@ -595,7 +591,6 @@ export default function BacktestingPage() {
 
   // ─── Exit time handler — computes P&L from cached bar data ─────────
   const handleExitChange = useCallback((exitTime: string, exitDate: string) => {
-    console.log("[exit-change]", { exitTime, exitDate });
     setExitSelection({ time: exitTime, date: exitDate });
   }, []);
 
@@ -608,15 +603,29 @@ export default function BacktestingPage() {
         setShowPaywall(true);
         return;
       }
-      console.log("[handleLoadChain]", selection);
+      // Invalidate all pending fetches
+      mainFetchId.current++;
+      dayFetchId.current = 0;
+      // Full state reset before new replay
       setMoment(selection);
       setCurrentExpiry(resolveDefaultExpiry(selection.date));
       setSelectedStrike(0); // ATM
       setReplayResult(null);
+      setChainData(null);
+      setLastPricing(null);
+      setLoading(false);
       setError(null);
       setViewedDate(selection.date);
+      setViewedDayPoints(null);
+      setViewedDayLoading(false);
+      setViewedDayDTE(undefined);
+      setThetaDecayPrice(undefined);
       setExitSelection(null);
       setExitPL(null);
+      setUnderlyingPoints([]);
+      setUnderlyingLoading(false);
+      dayCacheRef.current.clear();
+      underlyingCacheRef.current.clear();
       scrollOnNextResult.current = true;
     },
     [checkAndIncrement]

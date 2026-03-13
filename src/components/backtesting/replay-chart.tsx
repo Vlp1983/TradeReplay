@@ -10,6 +10,7 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceLine,
+  ReferenceDot,
 } from "recharts";
 import type { TimePoint } from "@/lib/engine/types";
 
@@ -201,6 +202,18 @@ export function ReplayChart({
               fill: "#0B1220",
             }}
           />
+
+          {/* Entry point marker dot */}
+          {points.length > 0 && (
+            <ReferenceDot
+              x={points[0].label}
+              y={points[0].pl_dollar}
+              r={5}
+              fill="#3B82F6"
+              stroke="#0B1220"
+              strokeWidth={2}
+            />
+          )}
         </AreaChart>
       </ResponsiveContainer>
     </div>
