@@ -74,6 +74,25 @@ function ChartTooltip({ active, payload, label, entryPremium }: ChartTooltipProp
   );
 }
 
+/**
+ * Generate time labels (5-min intervals) from startHour:startMin to 3:55 PM.
+ */
+function generateTimeSlots(startHour = 9, startMin = 30): string[] {
+  const labels: string[] = [];
+  for (let h = startHour; h <= 15; h++) {
+    const mStart = h === startHour ? startMin : 0;
+    const mEnd = h === 15 ? 55 : 55;
+    for (let m = mStart; m <= mEnd; m += 5) {
+      let h12 = h;
+      const suffix = h12 >= 12 ? "PM" : "AM";
+      if (h12 === 0) h12 = 12;
+      else if (h12 > 12) h12 -= 12;
+      labels.push(`${h12}:${m.toString().padStart(2, "0")} ${suffix}`);
+    }
+  }
+  return labels;
+}
+
 export function ReplayChart({
   sameDayPoints,
   entryPremium,
@@ -81,8 +100,33 @@ export function ReplayChart({
   isEntryDay = true,
   entryTime,
 }: ReplayChartProps) {
-  const points = sameDayPoints;
   const refValue = 0; // P/L breakeven
+
+  // Fill time slots to show full trading day (entry time → 3:55 PM on entry day, 9:30 → 3:55 on other days)
+  const points = useMemo(() => {
+    if (!sameDayPoints.length) return sameDayPoints;
+    const labelMap = new Map(sameDayPoints.map((p) => [p.label, p]));
+    let startH = 9, startM = 30;
+    if (isEntryDay && entryTime) {
+      const [eH, eM] = entryTime.split(":").map(Number);
+      startH = eH;
+      startM = eM - (eM % 5);
+    }
+    const allLabels = generateTimeSlots(startH, startM);
+    let lastKnown: TimePoint | null = null;
+    return allLabels.map((label) => {
+      const existing = labelMap.get(label);
+      if (existing) {
+        lastKnown = existing;
+        return existing;
+      }
+      // Forward-fill with last known values (null P/L where no data yet)
+      if (lastKnown) {
+        return { ...lastKnown, label };
+      }
+      return { label, time: "", price: 0, pl_dollar: 0, pl_pct: 0, dayIndex: 0 } as TimePoint;
+    });
+  }, [sameDayPoints, isEntryDay, entryTime]);
 
   const { yMin, yMax, gradientOffset } = useMemo(() => {
     if (!points.length) return { yMin: 0, yMax: 0, gradientOffset: 0.5 };

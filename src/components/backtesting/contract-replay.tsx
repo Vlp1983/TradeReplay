@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { List, Lightbulb, TrendingUp, TrendingDown, Target, Users } from "lucide-react";
@@ -222,6 +222,21 @@ export function ContractReplay({
   // Show DTE in contract info area — use viewed day DTE if viewing a different day
   const displayDTE = viewedDayDTE ?? computedDTE;
 
+  // Whether we're currently viewing the entry day
+  const isEntryDayFlag = !viewedDate || viewedDate === contract.date;
+
+  // Auto-refetch underlying when day changes while overlay is visible
+  const prevViewedDateRef = useRef(viewedDate);
+  useEffect(() => {
+    if (prevViewedDateRef.current !== viewedDate && showUnderlying && onRequestUnderlying) {
+      // Small delay to let the day change settle, then refetch
+      const timer = setTimeout(() => onRequestUnderlying(), 100);
+      prevViewedDateRef.current = viewedDate;
+      return () => clearTimeout(timer);
+    }
+    prevViewedDateRef.current = viewedDate;
+  }, [viewedDate, showUnderlying, onRequestUnderlying]);
+
   // Toggle handler for "Show Underlying"
   const handleToggleUnderlying = () => {
     if (!showUnderlying && (!underlyingPoints || underlyingPoints.length === 0) && onRequestUnderlying) {
@@ -430,8 +445,8 @@ export function ContractReplay({
           isMultiDay={isMultiDay}
           entryPremium={metrics.entryPremium}
           thetaDecayPrice={thetaDecayPrice}
-          isEntryDay={!viewedDate || viewedDate === contract.date}
-          entryTime={contract.entryTime}
+          isEntryDay={isEntryDayFlag}
+          entryTime={isEntryDayFlag ? contract.entryTime : undefined}
         />
         {chartLoading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-surface/70 z-10">
@@ -449,13 +464,18 @@ export function ContractReplay({
               points={underlyingPoints}
               ticker={contract.ticker}
               dateLabel={underlyingDateLabel}
-              entryTimeLabel={entryTimeLabel}
-              isEntryDay={!viewedDate || viewedDate === contract.date}
-              entryTime={contract.entryTime}
+              entryTimeLabel={isEntryDayFlag ? entryTimeLabel : undefined}
+              isEntryDay={isEntryDayFlag}
+              entryTime={isEntryDayFlag ? contract.entryTime : undefined}
             />
           </div>
         )}
       </div>
+
+      {/* Quote */}
+      <p className="mb-5 text-center text-[12px] italic text-text-muted/60">
+        &ldquo;The past, while not a perfect predictor of the future, is the best guide we have.&rdquo;
+      </p>
 
       {/* 3. Entry Summary (entry details + exit P&L + secondary if-held-to-close) */}
       <div className={`mb-5 ${loading ? "opacity-50" : ""}`}>
