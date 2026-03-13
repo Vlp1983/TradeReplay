@@ -102,7 +102,7 @@ export function ReplayChart({
 }: ReplayChartProps) {
   const refValue = 0; // P/L breakeven
 
-  // Fill time slots to show full trading day (entry time → 3:55 PM on entry day, 9:30 → 3:55 on other days)
+  // Build full trading day timeline with nulls for missing slots (no forward-fill = no flat line)
   const points = useMemo(() => {
     if (!sameDayPoints.length) return sameDayPoints;
     const labelMap = new Map(sameDayPoints.map((p) => [p.label, p]));
@@ -113,24 +113,18 @@ export function ReplayChart({
       startM = eM - (eM % 5);
     }
     const allLabels = generateTimeSlots(startH, startM);
-    let lastKnown: TimePoint | null = null;
     return allLabels.map((label) => {
       const existing = labelMap.get(label);
-      if (existing) {
-        lastKnown = existing;
-        return existing;
-      }
-      // Forward-fill with last known values (null P/L where no data yet)
-      if (lastKnown) {
-        return { ...lastKnown, label };
-      }
-      return { label, time: "", price: 0, pl_dollar: 0, pl_pct: 0, dayIndex: 0 } as TimePoint;
+      if (existing) return existing;
+      // Null placeholder — chart will show a gap, not a flat line
+      return { label, time: "", price: 0, pl_dollar: null, pl_pct: 0, dayIndex: 0 };
     });
   }, [sameDayPoints, isEntryDay, entryTime]);
 
   const { yMin, yMax, gradientOffset } = useMemo(() => {
     if (!points.length) return { yMin: 0, yMax: 0, gradientOffset: 0.5 };
-    const values = points.map((p) => p.pl_dollar);
+    const values = points.map((p) => p.pl_dollar).filter((v): v is number => v !== null);
+    if (values.length === 0) return { yMin: 0, yMax: 0, gradientOffset: 0.5 };
     const rawMin = Math.min(...values);
     const rawMax = Math.max(...values);
 
@@ -243,6 +237,7 @@ export function ReplayChart({
             strokeWidth={2}
             fill="url(#chartFillGrad)"
             dot={false}
+            connectNulls={false}
             activeDot={{
               r: 4,
               stroke: "#3B82F6",
@@ -251,8 +246,8 @@ export function ReplayChart({
             }}
           />
 
-          {/* Entry point marker dot */}
-          {points.length > 0 && (
+          {/* Entry point marker dot — only if first point has real data */}
+          {points.length > 0 && points[0].pl_dollar != null && (
             <ReferenceDot
               x={points[0].label}
               y={points[0].pl_dollar}

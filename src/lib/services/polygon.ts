@@ -270,11 +270,22 @@ export async function getIntradayBars(
     // Polygon failed — will try Yahoo
   }
 
-  // Step 2 — Yahoo fallback if Polygon returned < 50 bars
-  if (bars.length < 50) {
+  // Step 2 — Check for early cutoff: last bar before 3:30 PM ET
+  let earlyTruncation = false;
+  if (bars.length > 0) {
+    const lastBar = bars[bars.length - 1];
+    const d = new Date(lastBar.timestamp);
+    const hour = d.getUTCHours() - 5;
+    const totalMin = hour * 60 + d.getUTCMinutes();
+    earlyTruncation = totalMin < 930; // 3:30 PM = 15*60+30
+  }
+
+  // Step 3 — Yahoo fallback if Polygon truncated early OR returned < 50 bars
+  if (earlyTruncation || bars.length < 50) {
     try {
       const yahooBars = await fetchYahooIntradayBars(ticker, date);
       if (yahooBars.length > bars.length) {
+        console.warn(`[underlying] ${ticker} ${date}: Polygon gave ${bars.length} bars${earlyTruncation ? " (early cutoff)" : ""}. Yahoo gave ${yahooBars.length} bars. Using Yahoo.`);
         bars = yahooBars;
         source = "yahoo";
       }
@@ -283,7 +294,7 @@ export async function getIntradayBars(
     }
   }
 
-  // Step 3 — Log and return
+  // Step 4 — Log and return
   console.warn(`[underlying] ${ticker} ${date}: ${bars.length} bars from ${source}`);
 
   if (bars.length === 0) {

@@ -170,7 +170,7 @@ export function UnderlyingChart({ points, ticker, dateLabel, entryTimeLabel, isE
             stroke="rgba(255,255,255,0.7)"
             strokeWidth={1.5}
             dot={false}
-            connectNulls
+            connectNulls={false}
             activeDot={{
               r: 3,
               stroke: "rgba(255,255,255,0.5)",

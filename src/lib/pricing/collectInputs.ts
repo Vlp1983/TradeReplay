@@ -227,13 +227,34 @@ function generateSyntheticBars(ticker: string, date: string): Bar[] {
   return bars;
 }
 
+/** Check if bars end before 3:30 PM ET (early cutoff) */
+function hasEarlyCutoff(bars: Bar[]): boolean {
+  if (bars.length === 0) return true;
+  const lastBar = bars[bars.length - 1];
+  const d = new Date(lastBar.timestamp);
+  const hour = d.getUTCHours() - 5; // approximate ET
+  const minute = d.getUTCMinutes();
+  const totalMin = hour * 60 + minute;
+  return totalMin < 930; // 3:30 PM = 15*60+30 = 930
+}
+
 /** Full intraday fetch with fallback chain */
 async function fetchIntradayWithFallback(ticker: string, date: string): Promise<Bar[]> {
   // 1. Try Polygon
   let bars = await fetchIntradayPolygon(ticker, date);
+
+  // 2. If Polygon returned bars but they end before 3:30 PM, try Yahoo too
+  if (bars.length > 0 && hasEarlyCutoff(bars)) {
+    const yahooBars = await fetchIntradayYahoo(ticker, date);
+    if (yahooBars.length > bars.length) {
+      console.warn(`[collectInputs] ${ticker} ${date}: Polygon gave ${bars.length} bars (early cutoff). Yahoo gave ${yahooBars.length} bars. Using Yahoo.`);
+      bars = yahooBars;
+    }
+  }
+
   if (bars.length > 0) return bars;
 
-  // 2. Try Yahoo Finance
+  // 3. Try Yahoo Finance as primary fallback
   bars = await fetchIntradayYahoo(ticker, date);
   if (bars.length > 0) return bars;
 
