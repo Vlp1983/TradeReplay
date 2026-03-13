@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -10,16 +10,8 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceLine,
-  Line,
-  ComposedChart,
 } from "recharts";
-import type { TimePoint, ChartRange } from "@/lib/engine/types";
-
-interface UnderlyingPoint {
-  time: string;
-  label: string;
-  underlyingPrice: number;
-}
+import type { TimePoint } from "@/lib/engine/types";
 
 interface ReplayChartProps {
   sameDayPoints: TimePoint[];
@@ -28,18 +20,12 @@ interface ReplayChartProps {
   entryPremium: number;
   /** Optional: theoretical theta-only price for the currently viewed day */
   thetaDecayPrice?: number;
-  /** Underlying intraday bars for the currently viewed day */
-  underlyingPoints?: UnderlyingPoint[];
-  /** True while underlying data is loading */
-  underlyingLoading?: boolean;
-  /** Called to request underlying data */
-  onRequestUnderlying?: () => void;
 }
 
 interface TooltipPayloadEntry {
   dataKey: string;
   value: number;
-  payload: TimePoint & { underlyingPrice?: number };
+  payload: TimePoint;
 }
 
 interface ChartTooltipProps {
@@ -47,14 +33,12 @@ interface ChartTooltipProps {
   payload?: TooltipPayloadEntry[];
   label?: string;
   entryPremium: number;
-  showUnderlying: boolean;
 }
 
-function ChartTooltip({ active, payload, label, entryPremium, showUnderlying }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, label, entryPremium }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
 
   const plEntry = payload.find((p) => p.dataKey === "pl_dollar");
-  const underlyingEntry = payload.find((p) => p.dataKey === "underlyingPrice");
   const pt = plEntry?.payload;
   if (!pt) return null;
 
@@ -83,42 +67,16 @@ function ChartTooltip({ active, payload, label, entryPremium, showUnderlying }: 
       <p className="text-[11px]" style={{ color: "rgba(246,248,255,0.45)" }}>
         Premium: ${pt.price.toFixed(2)} per share &middot; ${(pt.price * 100).toFixed(2)} per contract
       </p>
-      {showUnderlying && underlyingEntry != null && (
-        <p className="mt-1 text-[11px]" style={{ color: "rgba(246,248,255,0.4)" }}>
-          Underlying: ${underlyingEntry.value.toFixed(2)}
-        </p>
-      )}
     </div>
   );
 }
 
 export function ReplayChart({
   sameDayPoints,
-  toExpirationPoints,
-  isMultiDay,
   entryPremium,
   thetaDecayPrice,
-  underlyingPoints,
-  underlyingLoading,
-  onRequestUnderlying,
 }: ReplayChartProps) {
-  const [showUnderlying, setShowUnderlying] = useState(false);
-
   const points = sameDayPoints;
-
-  // Merge underlying data into option points for ComposedChart
-  const mergedData = useMemo(() => {
-    if (!showUnderlying || !underlyingPoints?.length) {
-      return points.map((p) => ({ ...p, underlyingPrice: undefined as number | undefined }));
-    }
-    // Build lookup by time label
-    const uMap = new Map(underlyingPoints.map((u) => [u.label, u.underlyingPrice]));
-    return points.map((p) => ({
-      ...p,
-      underlyingPrice: uMap.get(p.label) as number | undefined,
-    }));
-  }, [points, underlyingPoints, showUnderlying]);
-
   const refValue = 0; // P/L breakeven
 
   const { yMin, yMax, gradientOffset } = useMemo(() => {
@@ -149,49 +107,12 @@ export function ReplayChart({
     };
   }, [points, refValue]);
 
-  // Underlying Y-axis domain
-  const underlyingDomain = useMemo(() => {
-    if (!showUnderlying || !underlyingPoints?.length) return [0, 100];
-    const prices = underlyingPoints.map((u) => u.underlyingPrice);
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const pad = (max - min || 1) * 0.1;
-    return [min - pad, max + pad];
-  }, [showUnderlying, underlyingPoints]);
-
-  const handleToggleUnderlying = () => {
-    if (!showUnderlying && !underlyingPoints?.length && onRequestUnderlying) {
-      onRequestUnderlying();
-    }
-    setShowUnderlying(!showUnderlying);
-  };
-
   return (
     <div className="rounded-lg border border-border bg-bg p-4">
-      {/* Controls */}
-      <div className="mb-3 flex items-center justify-end">
-        <button
-          onClick={handleToggleUnderlying}
-          disabled={underlyingLoading}
-          className={`rounded-md border px-3 py-1 text-[11px] font-medium transition-colors ${
-            showUnderlying
-              ? "border-accent/40 bg-accent/10 text-accent"
-              : "border-border text-text-muted hover:text-text-primary hover:border-border"
-          } ${underlyingLoading ? "opacity-50" : ""}`}
-        >
-          {underlyingLoading
-            ? "Loading..."
-            : showUnderlying
-              ? "Hide Underlying"
-              : "Show Underlying"}
-        </button>
-      </div>
-
-      {/* Chart */}
       <ResponsiveContainer width="100%" height={240}>
-        <ComposedChart
-          data={mergedData}
-          margin={{ top: 8, right: showUnderlying ? 56 : 8, bottom: 4, left: 8 }}
+        <AreaChart
+          data={points}
+          margin={{ top: 8, right: 8, bottom: 4, left: 8 }}
         >
           <defs>
             <linearGradient id="chartFillGrad" x1="0" y1="0" x2="0" y2="1">
@@ -221,7 +142,6 @@ export function ReplayChart({
             minTickGap={60}
           />
           <YAxis
-            yAxisId="option"
             tick={{ fill: "rgba(246,248,255,0.55)", fontSize: 11 }}
             axisLine={false}
             tickLine={false}
@@ -229,30 +149,14 @@ export function ReplayChart({
             tickFormatter={(val: number) => `$${val}`}
             width={56}
           />
-          {showUnderlying && (
-            <YAxis
-              yAxisId="underlying"
-              orientation="right"
-              tick={{ fill: "rgba(246,248,255,0.3)", fontSize: 10 }}
-              axisLine={false}
-              tickLine={false}
-              domain={underlyingDomain}
-              tickFormatter={(val: number) => `$${val.toFixed(0)}`}
-              width={52}
-            />
-          )}
           <Tooltip
             content={
-              <ChartTooltip
-                entryPremium={entryPremium}
-                showUnderlying={showUnderlying}
-              />
+              <ChartTooltip entryPremium={entryPremium} />
             }
           />
 
           {/* Entry reference line — blue dashed */}
           <ReferenceLine
-            yAxisId="option"
             y={refValue}
             stroke="#3B82F6"
             strokeWidth={1.5}
@@ -269,7 +173,6 @@ export function ReplayChart({
           {/* Theta decay reference line */}
           {thetaDecayPrice != null && (
             <ReferenceLine
-              yAxisId="option"
               y={(thetaDecayPrice - entryPremium) * 100}
               stroke="rgba(246,248,255,0.25)"
               strokeWidth={1}
@@ -285,7 +188,6 @@ export function ReplayChart({
 
           {/* Option P&L area */}
           <Area
-            yAxisId="option"
             type="monotone"
             dataKey="pl_dollar"
             stroke="url(#chartLineGrad)"
@@ -299,21 +201,7 @@ export function ReplayChart({
               fill: "#0B1220",
             }}
           />
-
-          {/* Underlying price line (secondary axis) */}
-          {showUnderlying && underlyingPoints?.length && (
-            <Line
-              yAxisId="underlying"
-              type="monotone"
-              dataKey="underlyingPrice"
-              stroke="rgba(255,255,255,0.25)"
-              strokeWidth={1.5}
-              dot={false}
-              strokeDasharray="4 2"
-              connectNulls
-            />
-          )}
-        </ComposedChart>
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   );

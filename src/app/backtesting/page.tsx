@@ -90,11 +90,22 @@ export default function BacktestingPage() {
   const dayFetchId = useRef(0);
   const scrollOnNextResult = useRef(false);
 
+  // Safety: reset loading on unmount to prevent stuck state
+  useEffect(() => {
+    return () => { setLoading(false); };
+  }, []);
+
   // Derive stable primitives for useEffect deps (avoids object reference issues)
   const ticker = moment?.ticker;
   const date = moment?.date;
   const entryTime = moment?.entryTime;
   const expiryMs = currentExpiry?.getTime() ?? null;
+
+  // Ref to track current params — avoids stale closures in debounced fetch
+  const paramsRef = useRef({ ticker, date, entryTime, selectedRight, expiryMs, selectedStrike });
+  useEffect(() => {
+    paramsRef.current = { ticker, date, entryTime, selectedRight, expiryMs, selectedStrike };
+  }, [ticker, date, entryTime, selectedRight, expiryMs, selectedStrike]);
 
   // Determine if current expiry is 0DTE
   const is0DTE = useMemo(() => {
@@ -188,19 +199,26 @@ export default function BacktestingPage() {
     setThetaDecayPrice(undefined);
 
     const timer = setTimeout(async () => {
+      // Read fresh params from ref to avoid stale closures after debounce
+      const p = paramsRef.current;
+      const freshTicker = p.ticker!;
+      const freshDate = p.date!;
+      const freshRight = p.selectedRight;
+      const freshExpiry = new Date(p.expiryMs!);
+
       setLoading(true);
       try {
-        let strike = selectedStrike;
+        let strike = p.selectedStrike;
 
         // Resolve ATM strike if needed (0 = "auto-ATM")
         if (strike === 0) {
           console.log("[pricing-effect] Resolving ATM strike...");
           const probe = await fetchPricing({
-            ticker,
-            replayDate: date,
+            ticker: freshTicker,
+            replayDate: freshDate,
             strike: 0,
-            expiry,
-            optionType: selectedRight,
+            expiry: freshExpiry,
+            optionType: freshRight,
           });
           if (id !== mainFetchId.current) return;
           strike = probe.strikeChain.atmStrike;
@@ -209,17 +227,17 @@ export default function BacktestingPage() {
 
         // Main pricing call with resolved strike
         console.log("[pricing-effect] Fetching:", {
-          ticker,
+          ticker: freshTicker,
           strike,
-          right: selectedRight,
-          expiry: expiry.toISOString(),
+          right: freshRight,
+          expiry: freshExpiry.toISOString(),
         });
         const pricing = await fetchPricing({
-          ticker,
-          replayDate: date,
+          ticker: freshTicker,
+          replayDate: freshDate,
           strike,
-          expiry,
-          optionType: selectedRight,
+          expiry: freshExpiry,
+          optionType: freshRight,
         });
         if (id !== mainFetchId.current) return;
 
@@ -237,9 +255,9 @@ export default function BacktestingPage() {
 
         // Chain data for strike picker
         const chain = pricingToChainData(
-          ticker,
-          date,
-          entryTime,
+          freshTicker,
+          freshDate,
+          p.entryTime!,
           pricing,
           pricing.strikeChain.atmStrike
         );
@@ -249,13 +267,13 @@ export default function BacktestingPage() {
         const atmPremium =
           pricing.bars.length > 0 ? pricing.bars[0].open : 1.0;
         const contract: SelectedContract = {
-          ticker,
-          date,
-          entryTime,
+          ticker: freshTicker,
+          date: freshDate,
+          entryTime: p.entryTime!,
           expiration:
             pricing.classification.dteBucket === "0DTE" ? "0dte" : "friday",
           strike,
-          right: selectedRight,
+          right: freshRight,
           entryPremium: +atmPremium.toFixed(2),
           confidence: "Med",
         };
@@ -272,7 +290,8 @@ export default function BacktestingPage() {
         setStep("replay");
 
         // Cache entry day data with full 6-part key
-        const key = `${ticker}-${date}-${strike}-${expiryMs}-${selectedRight}-${date}`;
+        const freshExpiryMs = p.expiryMs!;
+        const key = `${freshTicker}-${freshDate}-${strike}-${freshExpiryMs}-${freshRight}-${freshDate}`;
         dayCacheRef.current.set(key, {
           points: result.sameDayPoints,
           dte: result.metrics.dteAtEntry,
@@ -281,18 +300,18 @@ export default function BacktestingPage() {
         // Set viewedDate to entry day only if not already set to a valid day
         // This preserves the current day view on call/put toggle (item 2)
         setViewedDate((prev) => {
-          if (!prev || !tradingDays.length) return date;
+          if (!prev || !tradingDays.length) return freshDate;
           // If previously viewing a day in the new trading days range, keep it
-          const newExpiryStr = new Date(expiryMs).toISOString().slice(0, 10);
-          const newDays = getTradingDaysBetween(date, newExpiryStr);
+          const newExpiryStr = new Date(freshExpiryMs).toISOString().slice(0, 10);
+          const newDays = getTradingDaysBetween(freshDate, newExpiryStr);
           if (newDays.includes(prev)) return prev;
-          return date;
+          return freshDate;
         });
 
         // If we're viewing a non-entry day, fetch its data with the new optionType
         // This handles call/put toggle while on a different day
-        const currentViewed = viewedDate || date;
-        if (currentViewed !== date && tradingDays.includes(currentViewed)) {
+        const currentViewed = viewedDate || freshDate;
+        if (currentViewed !== freshDate && tradingDays.includes(currentViewed)) {
           // Trigger a day fetch for the viewed date after main pricing completes
           // We do this via the handleViewedDateChange flow
           setTimeout(() => {
@@ -316,11 +335,11 @@ export default function BacktestingPage() {
         // ─── Fetch insights async (non-blocking, fire-and-forget) ───
         const prices = result.sameDayPoints.map((p) => p.price);
         fetchInsights({
-          ticker,
-          date,
-          entryTime,
+          ticker: freshTicker,
+          date: freshDate,
+          entryTime: p.entryTime!,
           strike,
-          right: selectedRight,
+          right: freshRight,
           entryPremium: contract.entryPremium,
           exitPL: result.metrics.exitAtClosePL,
           exitPLPct: result.metrics.exitAtClosePLPct,
@@ -606,6 +625,10 @@ export default function BacktestingPage() {
   /** Toggle call/put — preserves viewedDate, only changes optionType (item 2 & 8) */
   const handleToggleRight = useCallback((right: Right) => {
     setSelectedRight(right);
+    setReplayResult(null);
+    setError(null);
+    // Invalidate pending fetches — the useEffect on selectedRight will re-trigger
+    mainFetchId.current++;
     // viewedDate stays the same — the useEffect will re-fetch with new right
     // and the viewedDate preservation logic keeps the day navigator position
   }, []);
@@ -675,6 +698,9 @@ export default function BacktestingPage() {
   }, [replayResult]);
 
   const handleNewBacktest = useCallback(() => {
+    // Invalidate pending fetches so they don't write stale state
+    mainFetchId.current++;
+    dayFetchId.current++;
     setStep("moment");
     setChainData(null);
     setReplayResult(null);
@@ -683,13 +709,16 @@ export default function BacktestingPage() {
     setCurrentExpiry(null);
     setSelectedStrike(0);
     setAvailableExpiries([]);
+    setLoading(false);
     setError(null);
     setViewedDate("");
     setViewedDayPoints(null);
+    setViewedDayLoading(false);
     setViewedDayDTE(undefined);
     setThetaDecayPrice(undefined);
     setEntryTimeOverride(undefined);
     setUnderlyingPoints([]);
+    setUnderlyingLoading(false);
     setExitSelection(null);
     setExitPL(null);
     dayCacheRef.current.clear();

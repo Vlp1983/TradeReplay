@@ -214,7 +214,8 @@ export function generateIntradayBars(params: {
     const remainingDTE = Math.max(dte - dayFraction / 365, 1e-8);
 
     // Get the current underlying spot for Greeks computation
-    const currentSpot = i === 0 ? spot : intradayBars[Math.max(0, i - 1)].close;
+    // Use current bar's close so Greeks reflect the latest underlying price
+    const currentSpot = bar.close;
 
     // Get Greeks at current state
     const greeks = computeGreeks(
@@ -232,6 +233,18 @@ export function generateIntradayBars(params: {
       const firstBarDelta = greeks.delta * underlyingDollarMove;
       const barOpen = openPrice;
       const barClose = Math.max(0.01, openPrice + firstBarDelta);
+      // Log first 3 bars to verify direction
+      console.log('[bar direction check]', {
+        i,
+        optionType,
+        underlyingOpen: bar.open,
+        underlyingClose: bar.close,
+        underlyingDollarMove,
+        delta: greeks.delta,
+        deltaMove: firstBarDelta,
+        prevOptionPrice: openPrice,
+        newOptionPrice: barClose,
+      });
       optionBars.push({
         timestamp: bar.timestamp,
         open: +barOpen.toFixed(2),
@@ -252,7 +265,25 @@ export function generateIntradayBars(params: {
 
     // ── Factor 1: Delta component ──
     // Delta = dOption/dSpot, so option dollar change = delta * spot dollar change
+    // For calls: delta > 0 → underlying up → option up
+    // For puts: delta < 0 → underlying up → option down
+    // NO sign flip, NO Math.abs() — delta already has the correct sign
     const deltaMove = greeks.delta * underlyingDollarMove;
+
+    // Log first 3 bars to verify direction
+    if (i < 3) {
+      console.log('[bar direction check]', {
+        i,
+        optionType,
+        underlyingOpen: bar.open,
+        underlyingClose: bar.close,
+        underlyingDollarMove,
+        delta: greeks.delta,
+        deltaMove,
+        prevOptionPrice: currentPrice,
+        newOptionPrice: currentPrice + deltaMove,
+      });
+    }
 
     if (deltaMove === 0 && i <= 5) {
       zeroDeltaCount++;

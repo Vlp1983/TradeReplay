@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { List } from "lucide-react";
 import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
+import { UnderlyingChart } from "./underlying-chart";
+import type { UnderlyingPoint } from "./underlying-chart";
 import { KeyMomentsList } from "./key-moments-list";
 import { InsightsPanel } from "./insights-panel";
 import { DeepDivePanel } from "./deep-dive-panel";
@@ -20,12 +22,6 @@ export interface ExpiryOption {
   label: string;
   dte: number;
   type: "0DTE" | "weekly";
-}
-
-interface UnderlyingPoint {
-  time: string;
-  label: string;
-  underlyingPrice: number;
 }
 
 interface ContractReplayProps {
@@ -99,6 +95,8 @@ export function ContractReplay({
   underlyingLoading,
   onRequestUnderlying,
 }: ContractReplayProps) {
+  const [showUnderlying, setShowUnderlying] = useState(false);
+
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
 
@@ -108,11 +106,22 @@ export function ContractReplay({
   // Use selectedRight from parent for immediate visual toggle feedback
   const isCall = selectedRight === "call";
 
-  // Derive expiry label from selected expiry or fallback
+  // Derive expiry label from selected expiry or fallback with formatted date
   const selectedExpiry = availableExpiries?.find(
     (e) => e.date === selectedExpiryISO
   );
-  const expLabel = selectedExpiry?.label ?? contract.expiration;
+  const expLabel = useMemo(() => {
+    if (selectedExpiry?.label) return selectedExpiry.label;
+    // Format the ISO date to "Fri Feb 27" style instead of raw "friday"
+    if (selectedExpiryISO) {
+      const d = new Date(selectedExpiryISO);
+      const dayName = d.toLocaleString("en-US", { weekday: "short", timeZone: "UTC" });
+      const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+      const day = d.getUTCDate();
+      return `${dayName} ${month} ${day}`;
+    }
+    return contract.expiration;
+  }, [selectedExpiry, selectedExpiryISO, contract.expiration]);
 
   // Compute expiry date string for exit picker
   const expiryDateStr = selectedExpiryISO
@@ -128,6 +137,23 @@ export function ContractReplay({
 
   // Show DTE in contract info area
   const displayDTE = viewedDayDTE ?? metrics.dteAtEntry;
+
+  // Toggle handler for "Show Underlying"
+  const handleToggleUnderlying = () => {
+    if (!showUnderlying && (!underlyingPoints || underlyingPoints.length === 0) && onRequestUnderlying) {
+      onRequestUnderlying();
+    }
+    setShowUnderlying(!showUnderlying);
+  };
+
+  // Date label for the underlying chart title (e.g. "Feb 27")
+  const underlyingDateLabel = useMemo(() => {
+    const targetDate = viewedDate || contract.date;
+    const d = new Date(targetDate + "T12:00:00Z");
+    const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+    const day = d.getUTCDate();
+    return `${month} ${day}`;
+  }, [viewedDate, contract.date]);
 
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
@@ -261,15 +287,31 @@ export function ContractReplay({
 
       {/* 2. Chart (above trade summary) with loading overlay */}
       <div className="relative mb-5">
+        {/* Show Underlying toggle */}
+        <div className="mb-2 flex items-center justify-end">
+          <button
+            onClick={handleToggleUnderlying}
+            disabled={underlyingLoading}
+            className={`rounded-md border px-3 py-1 text-[11px] font-medium transition-colors ${
+              showUnderlying
+                ? "border-accent/40 bg-accent/10 text-accent"
+                : "border-border text-text-muted hover:text-text-primary hover:border-border"
+            } ${underlyingLoading ? "opacity-50" : ""}`}
+          >
+            {underlyingLoading
+              ? "Loading..."
+              : showUnderlying
+                ? "Hide Underlying"
+                : "Show Underlying"}
+          </button>
+        </div>
+
         <ReplayChart
           sameDayPoints={chartPoints}
           toExpirationPoints={toExpirationPoints}
           isMultiDay={isMultiDay}
           entryPremium={metrics.entryPremium}
           thetaDecayPrice={thetaDecayPrice}
-          underlyingPoints={underlyingPoints}
-          underlyingLoading={underlyingLoading}
-          onRequestUnderlying={onRequestUnderlying}
         />
         {chartLoading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-surface/70 z-10">
@@ -279,9 +321,20 @@ export function ContractReplay({
             </div>
           </div>
         )}
+
+        {/* Separate underlying chart below option chart */}
+        {showUnderlying && underlyingPoints && underlyingPoints.length > 0 && (
+          <div className="mt-3">
+            <UnderlyingChart
+              points={underlyingPoints}
+              ticker={contract.ticker}
+              dateLabel={underlyingDateLabel}
+            />
+          </div>
+        )}
       </div>
 
-      {/* 3. Trade Summary (entry details + exit P&L + secondary if-held-to-close) */}
+      {/* 3. Entry Summary (entry details + exit P&L + secondary if-held-to-close) */}
       <div className={`mb-5 ${loading ? "opacity-50" : ""}`}>
         <SummaryCards metrics={metrics} right={selectedRight} exitPL={exitPL} />
       </div>

@@ -85,6 +85,12 @@ export function DayNavigator({
 
   if (total <= 1) return null;
 
+  // Build slots: always render MAX_VISIBLE slots for consistent sizing
+  const slots: (string | null)[] = [];
+  for (let i = 0; i < MAX_VISIBLE; i++) {
+    slots.push(i < visibleDays.length ? visibleDays[i] : null);
+  }
+
   return (
     <div
       className="flex items-stretch gap-1"
@@ -101,20 +107,31 @@ export function DayNavigator({
         <ChevronLeft className="h-4 w-4" />
       </button>
 
-      {/* Day buttons */}
-      <div className="flex flex-1 gap-1 overflow-hidden">
-        {visibleDays.map((day) => {
+      {/* Day buttons — fixed-width grid */}
+      <div className="grid flex-1 gap-1" style={{ gridTemplateColumns: `repeat(${MAX_VISIBLE}, minmax(0, 1fr))` }}>
+        {slots.map((day, idx) => {
+          if (!day) {
+            // Empty placeholder slot
+            return <div key={`empty-${idx}`} className="min-w-0" />;
+          }
+
           const isActive = day === viewedDate;
           const isEntry = day === entryDate;
           const isExpiry = day === expiryDate;
           const isFuture = day >= today;
+
+          // Sub-label
+          let subLabel: string | null = null;
+          if (isEntry) subLabel = "Entry";
+          else if (isExpiry) subLabel = "Exp";
+          else subLabel = "Trading Day";
 
           return (
             <button
               key={day}
               onClick={() => onDayChange(day)}
               disabled={loading}
-              className={`flex-1 min-w-0 flex flex-col items-center rounded-lg py-1.5 text-[12px] font-medium transition-all ${
+              className={`min-w-0 flex flex-col items-center rounded-lg py-1.5 text-[12px] font-medium transition-all ${
                 isActive
                   ? "bg-accent text-white shadow-sm"
                   : isFuture
@@ -125,14 +142,17 @@ export function DayNavigator({
               }`}
             >
               <span className="truncate">{formatDayLabel(day)}</span>
-              {isEntry && (
-                <span className={`text-[8px] uppercase tracking-wide ${isActive ? "text-white/70" : "text-accent/70"}`}>
-                  entry
-                </span>
-              )}
-              {isExpiry && !isEntry && (
-                <span className={`text-[8px] uppercase tracking-wide ${isActive ? "text-white/70" : "text-amber-400/70"}`}>
-                  exp
+              {subLabel && (
+                <span className={`text-[8px] uppercase tracking-wide ${
+                  isActive
+                    ? "text-white/70"
+                    : isEntry
+                      ? "text-accent/70"
+                      : isExpiry
+                        ? "text-amber-400/70"
+                        : "text-text-muted/50"
+                }`}>
+                  {subLabel}
                 </span>
               )}
             </button>

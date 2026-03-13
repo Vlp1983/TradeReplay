@@ -74,7 +74,7 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
   return (
     <div className="rounded-lg border border-border bg-bg px-5 py-4">
       <h3 className="mb-3 text-[15px] font-semibold text-text-primary">
-        Trade Summary
+        Entry Summary
       </h3>
 
       {/* Entry info */}
