@@ -45,13 +45,23 @@ interface MomentPickerProps {
   loading?: boolean;
   selectedRight: Right;
   onRightChange: (right: Right) => void;
+  /** When true, restrict entry times to 9:30–11:30 AM */
+  is0DTE?: boolean;
+  /** Allow parent to override the entry time (e.g. snap on 0DTE switch) */
+  entryTimeOverride?: string;
 }
 
-export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChange }: MomentPickerProps) {
+export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChange, is0DTE, entryTimeOverride }: MomentPickerProps) {
   // Compute tradingDays first so we can derive the default date from it,
   // ensuring they always agree (avoids SSR/client timezone mismatch).
   const tradingDays = useMemo(() => getRecentTradingDays(42), []); // ~60 calendar days of weekdays
-  const timeSlots = useMemo(() => getEntryTimeSlots(), []);
+  const allTimeSlots = useMemo(() => getEntryTimeSlots(), []);
+
+  // 0DTE: restrict to 9:30 AM–11:30 AM (30-min intervals)
+  const timeSlots = useMemo(() => {
+    if (!is0DTE) return allTimeSlots;
+    return allTimeSlots.filter((s) => s.value <= "11:30");
+  }, [allTimeSlots, is0DTE]);
 
   const [ticker, setTicker] = useState("");
   const [query, setQuery] = useState("");
@@ -71,6 +81,13 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
       setDate(tradingDays[0]);
     }
   }, [tradingDays, date]);
+
+  // Snap entry time when parent overrides (e.g. 0DTE switch)
+  useEffect(() => {
+    if (entryTimeOverride && entryTimeOverride !== entryTime) {
+      setEntryTime(entryTimeOverride);
+    }
+  }, [entryTimeOverride]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load recent tickers on mount
   useEffect(() => {
@@ -322,6 +339,11 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
               ))}
             </select>
           </div>
+          {is0DTE && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              0DTE entries available until 11:30 AM ET
+            </p>
+          )}
         </div>
 
         {/* CTA */}

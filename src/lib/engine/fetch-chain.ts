@@ -83,18 +83,16 @@ export async function fetchPricing(params: {
 
 /**
  * For a given replay date, determine the best default expiry:
- * - If it's a Friday → 0DTE (same day)
- * - Otherwise → next Friday
+ * Always the nearest upcoming Friday (never 0DTE).
+ * If replayDate IS a Friday, default to the following Friday (7 days out).
  */
 export function resolveDefaultExpiry(replayDate: string): Date {
   const d = new Date(replayDate + "T12:00:00Z");
   const dayOfWeek = d.getUTCDay(); // 0=Sun, 5=Fri
 
-  if (dayOfWeek === 5) {
-    return d;
-  }
+  let daysToFriday = (5 - dayOfWeek + 7) % 7;
+  if (daysToFriday === 0) daysToFriday = 7; // Friday → next Friday
 
-  const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7;
   const friday = new Date(d);
   friday.setUTCDate(friday.getUTCDate() + daysToFriday);
   return friday;
@@ -153,7 +151,7 @@ export function pricingToChainData(
       isATM,
       greeks: isATM
         ? {
-            delta: -Math.abs(pricing.greeksAtOpen.delta),
+            delta: pricing.greeksAtOpen.delta,
             gamma: pricing.greeksAtOpen.gamma,
             theta: pricing.greeksAtOpen.theta,
             vega: pricing.greeksAtOpen.vega,

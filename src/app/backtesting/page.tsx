@@ -39,25 +39,13 @@ interface DayCache {
   dte: number;
 }
 
-/**
- * Build a cache key that includes ALL pricing params.
- * Prevents stale cache hits when switching call/put or changing expiry.
- */
-function dayCacheKey(
-  viewedDate: string,
-  optionType: string,
-  strike: number,
-  expiryMs: number
-): string {
-  return `${viewedDate}:${optionType}:${strike}:${expiryMs}`;
-}
-
 export default function BacktestingPage() {
   // ─── Core pricing params (changes trigger re-pricing via useEffect) ──
   const [moment, setMoment] = useState<MomentSelection | null>(null);
   const [selectedRight, setSelectedRight] = useState<Right>("call");
   const [currentExpiry, setCurrentExpiry] = useState<Date | null>(null);
   const [selectedStrike, setSelectedStrike] = useState<number>(0); // 0 = auto-resolve ATM
+  const [entryTimeOverride, setEntryTimeOverride] = useState<string | undefined>(undefined);
 
   // ─── Results & cache ──────────────────────────────────────────────
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
@@ -72,7 +60,6 @@ export default function BacktestingPage() {
   const [viewedDayDTE, setViewedDayDTE] = useState<number | undefined>(undefined);
   const [thetaDecayPrice, setThetaDecayPrice] = useState<number | undefined>(undefined);
   const dayCacheRef = useRef<Map<string, DayCache>>(new Map());
-  const dayFetchIdRef = useRef(0);
 
   // ─── UI state ─────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>("moment");
@@ -84,7 +71,8 @@ export default function BacktestingPage() {
 
   const chainRef = useRef<HTMLDivElement>(null);
   const replayRef = useRef<HTMLDivElement>(null);
-  const fetchIdRef = useRef(0);
+  const mainFetchId = useRef(0);
+  const dayFetchId = useRef(0);
   const scrollOnNextResult = useRef(false);
 
   // Derive stable primitives for useEffect deps (avoids object reference issues)
@@ -92,6 +80,13 @@ export default function BacktestingPage() {
   const date = moment?.date;
   const entryTime = moment?.entryTime;
   const expiryMs = currentExpiry?.getTime() ?? null;
+
+  // Determine if current expiry is 0DTE
+  const is0DTE = useMemo(() => {
+    if (!date || expiryMs == null) return false;
+    const expiryStr = new Date(expiryMs).toISOString().slice(0, 10);
+    return expiryStr === date;
+  }, [date, expiryMs]);
 
   // Compute trading days for multi-day navigation
   const tradingDays = useMemo(() => {
@@ -102,19 +97,18 @@ export default function BacktestingPage() {
   }, [date, expiryMs]);
 
   // ─── Core pricing effect (300ms debounce) ──────────────────────────
-  //
-  // All pricing calls flow through this single effect. Event handlers
-  // just set state; this effect reacts to changes and fetches new data.
-  // A fetchId counter prevents stale responses from overwriting newer ones.
-  //
   useEffect(() => {
     if (!ticker || !date || !entryTime || expiryMs == null) return;
 
-    const currentFetchId = ++fetchIdRef.current;
+    const id = ++mainFetchId.current;
+    // Invalidate any pending day fetches
+    dayFetchId.current = 0;
     const expiry = new Date(expiryMs);
 
     // Clear error and stale state immediately (before debounce delay)
     setError(null);
+    setReplayResult(null);
+    setLoading(true);
 
     // Reset multi-day state on new pricing params
     dayCacheRef.current.clear();
@@ -124,8 +118,6 @@ export default function BacktestingPage() {
     setThetaDecayPrice(undefined);
 
     const timer = setTimeout(async () => {
-      setLoading(true);
-
       try {
         let strike = selectedStrike;
 
@@ -139,7 +131,7 @@ export default function BacktestingPage() {
             expiry,
             optionType: selectedRight,
           });
-          if (currentFetchId !== fetchIdRef.current) return; // stale
+          if (id !== mainFetchId.current) return;
           strike = probe.strikeChain.atmStrike;
           console.log("[pricing-effect] ATM resolved:", strike);
         }
@@ -158,7 +150,7 @@ export default function BacktestingPage() {
           expiry,
           optionType: selectedRight,
         });
-        if (currentFetchId !== fetchIdRef.current) return; // stale
+        if (id !== mainFetchId.current) return;
 
         // ─── Process results ────────────────────────────────────────
         setLastPricing(pricing);
@@ -203,11 +195,13 @@ export default function BacktestingPage() {
           entry: result.metrics.entryPremium,
           exitPL: result.metrics.exitAtClosePL,
         });
+        if (id !== mainFetchId.current) return;
         setReplayResult(result);
+        setError(null);
         setStep("replay");
 
-        // Cache entry day data (with full cache key)
-        const key = dayCacheKey(date, selectedRight, strike, expiryMs);
+        // Cache entry day data with full 6-part key
+        const key = `${ticker}-${date}-${strike}-${expiryMs}-${selectedRight}-${date}`;
         dayCacheRef.current.set(key, {
           points: result.sameDayPoints,
           dte: result.metrics.dteAtEntry,
@@ -246,7 +240,7 @@ export default function BacktestingPage() {
           underlyingLow: prices.length > 0 ? Math.min(...prices) : 0,
         })
           .then((insightsResult) => {
-            if (currentFetchId !== fetchIdRef.current) return;
+            if (id !== mainFetchId.current) return;
             if (insightsResult.insights.length > 0) {
               setReplayResult((prev) =>
                 prev
@@ -260,12 +254,11 @@ export default function BacktestingPage() {
             }
           })
           .catch(() => {});
-      } catch (err) {
-        if (currentFetchId !== fetchIdRef.current) return; // stale
-        console.error("[pricing-effect] Error:", err);
+      } catch {
+        if (id !== mainFetchId.current) return;
         setError("Failed to load pricing data. Please try again.");
       } finally {
-        if (currentFetchId === fetchIdRef.current) {
+        if (id === mainFetchId.current) {
           setLoading(false);
         }
       }
@@ -278,6 +271,7 @@ export default function BacktestingPage() {
   const handleViewedDateChange = useCallback(
     async (newDate: string) => {
       setViewedDate(newDate);
+      console.log("[dayNav] fetching day:", newDate);
 
       // If it's the entry day, use the existing sameDayPoints
       if (newDate === date) {
@@ -291,8 +285,8 @@ export default function BacktestingPage() {
       const resolvedStrike = replayResult?.contract.strike;
       if (!ticker || !currentExpiry || !resolvedStrike) return;
 
-      // Build cache key with ALL pricing params
-      const key = dayCacheKey(newDate, selectedRight, resolvedStrike, currentExpiry.getTime());
+      // Build cache key: ticker-replayDate-strike-expiry-optionType-viewedDate
+      const key = `${ticker}-${date}-${resolvedStrike}-${currentExpiry.getTime()}-${selectedRight}-${newDate}`;
 
       // Check cache
       const cached = dayCacheRef.current.get(key);
@@ -317,10 +311,12 @@ export default function BacktestingPage() {
       }
 
       // Fetch pricing for the new day
-      const currentDayFetchId = ++dayFetchIdRef.current;
+      const id = ++dayFetchId.current;
+      setError(null);
       setViewedDayLoading(true);
 
       try {
+        // DTE from viewedDate to expiry (not from original replayDate)
         const pricing = await fetchPricing({
           ticker,
           replayDate: newDate,
@@ -328,13 +324,13 @@ export default function BacktestingPage() {
           expiry: currentExpiry,
           optionType: selectedRight,
         });
-        if (currentDayFetchId !== dayFetchIdRef.current) return; // stale
+        if (id !== dayFetchId.current) return;
 
         // Convert bars to points using the ORIGINAL entry premium
         const entryPremium = replayResult?.metrics.entryPremium ?? 1.0;
         const points = barsToTimePoints(pricing.bars, entryPremium);
 
-        // Compute DTE for this day
+        // Compute DTE from viewedDate to expiry
         const msPerDay = 86400000;
         const dayDate = new Date(newDate + "T12:00:00Z");
         const dte = Math.max(0, Math.round(
@@ -344,7 +340,7 @@ export default function BacktestingPage() {
         // Cache with full key
         dayCacheRef.current.set(key, { points, dte });
 
-        if (currentDayFetchId !== dayFetchIdRef.current) return; // stale
+        if (id !== dayFetchId.current) return;
         setViewedDayPoints(points);
         setViewedDayDTE(dte);
 
@@ -355,12 +351,12 @@ export default function BacktestingPage() {
             replayResult.metrics.thetaAtEntry * daysFromEntry;
           setThetaDecayPrice(Math.max(0.01, thetaPrice));
         }
-      } catch (err) {
-        if (currentDayFetchId !== dayFetchIdRef.current) return; // stale
-        console.error("[day-fetch] Error:", err);
+      } catch {
+        if (id !== dayFetchId.current) return;
+        setError("Failed to load day data. Please try again.");
         setViewedDayPoints([]);
       } finally {
-        if (currentDayFetchId === dayFetchIdRef.current) {
+        if (id === dayFetchId.current) {
           setViewedDayLoading(false);
         }
       }
@@ -402,7 +398,19 @@ export default function BacktestingPage() {
   /** Expiry change from replay chips (receives a Date) */
   const handleExpiryChange = useCallback((expiryDate: Date) => {
     setCurrentExpiry(expiryDate);
-  }, []);
+
+    // If switching to 0DTE, snap entry time to 11:30 if currently after
+    if (moment) {
+      const expiryStr = expiryDate.toISOString().slice(0, 10);
+      const isNew0DTE = expiryStr === moment.date;
+      if (isNew0DTE && moment.entryTime > "11:30") {
+        setEntryTimeOverride("11:30");
+        setMoment({ ...moment, entryTime: "11:30" });
+      } else {
+        setEntryTimeOverride(undefined);
+      }
+    }
+  }, [moment]);
 
   /** Expiration change from chain snapshot (converts Expiration → Date) */
   const handleExpirationChange = useCallback(
@@ -414,7 +422,8 @@ export default function BacktestingPage() {
         expiry = refDate;
       } else {
         const dayOfWeek = refDate.getUTCDay();
-        const daysToFriday = (5 - dayOfWeek + 7) % 7 || 7;
+        let daysToFriday = (5 - dayOfWeek + 7) % 7;
+        if (daysToFriday === 0) daysToFriday = 7;
         expiry = new Date(refDate);
         expiry.setUTCDate(expiry.getUTCDate() + daysToFriday);
       }
@@ -459,6 +468,7 @@ export default function BacktestingPage() {
     setViewedDayPoints(null);
     setViewedDayDTE(undefined);
     setThetaDecayPrice(undefined);
+    setEntryTimeOverride(undefined);
     dayCacheRef.current.clear();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -501,6 +511,8 @@ export default function BacktestingPage() {
               loading={isInitialLoading}
               selectedRight={selectedRight}
               onRightChange={handleToggleRight}
+              is0DTE={is0DTE}
+              entryTimeOverride={entryTimeOverride}
             />
 
             {/* Step 2 — chain snapshot (only when user picks another contract) */}
