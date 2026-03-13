@@ -39,6 +39,12 @@ interface DayCache {
   dte: number;
 }
 
+interface UnderlyingPoint {
+  time: string;
+  label: string;
+  underlyingPrice: number;
+}
+
 export default function BacktestingPage() {
   // ─── Core pricing params (changes trigger re-pricing via useEffect) ──
   const [moment, setMoment] = useState<MomentSelection | null>(null);
@@ -60,6 +66,15 @@ export default function BacktestingPage() {
   const [viewedDayDTE, setViewedDayDTE] = useState<number | undefined>(undefined);
   const [thetaDecayPrice, setThetaDecayPrice] = useState<number | undefined>(undefined);
   const dayCacheRef = useRef<Map<string, DayCache>>(new Map());
+
+  // ─── Underlying overlay state ─────────────────────────────────────
+  const [underlyingPoints, setUnderlyingPoints] = useState<UnderlyingPoint[]>([]);
+  const [underlyingLoading, setUnderlyingLoading] = useState(false);
+  const underlyingCacheRef = useRef<Map<string, UnderlyingPoint[]>>(new Map());
+
+  // ─── Exit P&L state ───────────────────────────────────────────────
+  const [exitPL, setExitPL] = useState<{ premium: number; dollar: number; pct: number } | null>(null);
+  const [exitSelection, setExitSelection] = useState<{ time: string; date: string } | null>(null);
 
   // ─── UI state ─────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>("moment");
@@ -96,7 +111,58 @@ export default function BacktestingPage() {
     return getTradingDaysBetween(date, expiryStr);
   }, [date, expiryMs]);
 
+  // ─── Compute exit P&L from cached bar data ────────────────────────
+  useEffect(() => {
+    if (!exitSelection || !replayResult) {
+      setExitPL(null);
+      return;
+    }
+
+    const { time: exitTime, date: exitDate } = exitSelection;
+    const entryPremium = replayResult.metrics.entryPremium;
+
+    // Find the right day's points
+    let points: TimePoint[];
+    if (exitDate === date) {
+      points = replayResult.sameDayPoints;
+    } else {
+      const resolvedStrike = replayResult?.contract.strike ?? 0;
+      const key = `${ticker}-${date}-${resolvedStrike}-${expiryMs}-${selectedRight}-${exitDate}`;
+      const cached = dayCacheRef.current.get(key);
+      if (cached) {
+        points = cached.points;
+      } else {
+        // Data not cached yet — can't compute
+        setExitPL(null);
+        return;
+      }
+    }
+
+    if (points.length === 0) {
+      setExitPL(null);
+      return;
+    }
+
+    // Find the bar closest to exit time
+    let closest = points[0];
+    for (const pt of points) {
+      if (pt.time <= exitTime) closest = pt;
+    }
+
+    const exitPremium = closest.price;
+    const plDollar = +((exitPremium - entryPremium) * 100).toFixed(0);
+    const plPct = entryPremium > 0.01
+      ? +(((exitPremium - entryPremium) / entryPremium) * 100).toFixed(1)
+      : 0;
+
+    setExitPL({ premium: exitPremium, dollar: plDollar, pct: plPct });
+  }, [exitSelection, replayResult, date, ticker, expiryMs, selectedRight]);
+
   // ─── Core pricing effect (300ms debounce) ──────────────────────────
+  //
+  // Fires when: ticker, date, entryTime, selectedRight, expiryMs, or selectedStrike change.
+  // Does NOT fire on viewedDate changes (that's handled by handleViewedDateChange).
+  //
   useEffect(() => {
     if (!ticker || !date || !entryTime || expiryMs == null) return;
 
@@ -110,9 +176,19 @@ export default function BacktestingPage() {
     setReplayResult(null);
     setLoading(true);
 
-    // Reset multi-day state on new pricing params
+    // Reset multi-day cache and underlying cache on new pricing params
     dayCacheRef.current.clear();
-    setViewedDate(date);
+    underlyingCacheRef.current.clear();
+    setUnderlyingPoints([]);
+
+    // Do NOT reset viewedDate here for call/put toggle (item 2 & 8)
+    // Only reset when ticker, date, entryTime, or expiry change
+    // selectedRight changes should preserve viewedDate
+    // We detect this by checking if viewedDate was already set to entry date range
+
+    // Reset exit P&L since bars changed
+    setExitPL(null);
+
     setViewedDayPoints(null);
     setViewedDayDTE(undefined);
     setThetaDecayPrice(undefined);
@@ -207,6 +283,30 @@ export default function BacktestingPage() {
           dte: result.metrics.dteAtEntry,
         });
 
+        // Set viewedDate to entry day only if not already set to a valid day
+        // This preserves the current day view on call/put toggle (item 2)
+        setViewedDate((prev) => {
+          if (!prev || !tradingDays.length) return date;
+          // If previously viewing a day in the new trading days range, keep it
+          const newExpiryStr = new Date(expiryMs).toISOString().slice(0, 10);
+          const newDays = getTradingDaysBetween(date, newExpiryStr);
+          if (newDays.includes(prev)) return prev;
+          return date;
+        });
+
+        // If we're viewing a non-entry day, fetch its data with the new optionType
+        // This handles call/put toggle while on a different day
+        const currentViewed = viewedDate || date;
+        if (currentViewed !== date && tradingDays.includes(currentViewed)) {
+          // Trigger a day fetch for the viewed date after main pricing completes
+          // We do this via the handleViewedDateChange flow
+          setTimeout(() => {
+            if (id === mainFetchId.current) {
+              handleViewedDateChangeInternal(currentViewed, result, strike);
+            }
+          }, 50);
+        }
+
         // Scroll to replay section on initial load
         if (scrollOnNextResult.current) {
           scrollOnNextResult.current = false;
@@ -265,13 +365,80 @@ export default function BacktestingPage() {
     }, 300);
 
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticker, date, entryTime, selectedRight, expiryMs, selectedStrike]);
+
+  // ─── Internal day fetch (used after main pricing completes for non-entry day) ─
+  const handleViewedDateChangeInternal = useCallback(
+    async (newDate: string, result: ReplayResult, resolvedStrike: number) => {
+      if (!ticker || !currentExpiry) return;
+
+      const key = `${ticker}-${date}-${resolvedStrike}-${currentExpiry.getTime()}-${selectedRight}-${newDate}`;
+      const cached = dayCacheRef.current.get(key);
+      if (cached) {
+        setViewedDayPoints(cached.points);
+        setViewedDayDTE(cached.dte);
+        return;
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      if (newDate >= today) {
+        setViewedDayPoints([]);
+        return;
+      }
+
+      const id = ++dayFetchId.current;
+      setViewedDayLoading(true);
+
+      try {
+        const pricing = await fetchPricing({
+          ticker,
+          replayDate: newDate,
+          strike: resolvedStrike,
+          expiry: currentExpiry,
+          optionType: selectedRight,
+        });
+        if (id !== dayFetchId.current) return;
+
+        const entryPremium = result.metrics.entryPremium;
+        const points = barsToTimePoints(pricing.bars, entryPremium);
+
+        const msPerDay = 86400000;
+        const dayDate = new Date(newDate + "T12:00:00Z");
+        const dte = Math.max(0, Math.round(
+          (currentExpiry.getTime() - dayDate.getTime()) / msPerDay
+        ));
+
+        dayCacheRef.current.set(key, { points, dte });
+
+        if (id !== dayFetchId.current) return;
+        setViewedDayPoints(points);
+        setViewedDayDTE(dte);
+
+        if (result) {
+          const daysFromEntry = result.metrics.dteAtEntry - dte;
+          const thetaPrice = result.metrics.entryPremium +
+            result.metrics.thetaAtEntry * daysFromEntry;
+          setThetaDecayPrice(Math.max(0.01, thetaPrice));
+        }
+      } catch {
+        if (id !== dayFetchId.current) return;
+        setViewedDayPoints([]);
+      } finally {
+        if (id === dayFetchId.current) setViewedDayLoading(false);
+      }
+    },
+    [ticker, date, currentExpiry, selectedRight]
+  );
 
   // ─── Multi-day: fetch data for a non-entry day ────────────────────
   const handleViewedDateChange = useCallback(
     async (newDate: string) => {
       setViewedDate(newDate);
       console.log("[dayNav] fetching day:", newDate);
+
+      // Clear underlying overlay when switching days
+      setUnderlyingPoints([]);
 
       // If it's the entry day, use the existing sameDayPoints
       if (newDate === date) {
@@ -364,10 +531,58 @@ export default function BacktestingPage() {
     [date, ticker, currentExpiry, selectedRight, replayResult]
   );
 
-  // ─── Exit time handler (placeholder — stores for future deep dive) ─
+  // ─── Underlying overlay fetch ──────────────────────────────────────
+  const handleRequestUnderlying = useCallback(async () => {
+    if (!ticker) return;
+    const targetDate = viewedDate || date;
+    if (!targetDate) return;
+
+    // Check cache
+    const cacheKey = `${ticker}-${targetDate}`;
+    const cached = underlyingCacheRef.current.get(cacheKey);
+    if (cached) {
+      setUnderlyingPoints(cached);
+      return;
+    }
+
+    setUnderlyingLoading(true);
+    try {
+      const res = await fetch(`/api/intraday?symbol=${encodeURIComponent(ticker)}&date=${targetDate}`);
+      if (!res.ok) {
+        setUnderlyingLoading(false);
+        return;
+      }
+      const data = await res.json();
+      const bars: { timestamp: number; close: number }[] = data.bars ?? [];
+
+      const points: UnderlyingPoint[] = bars.map((bar) => {
+        const d = new Date(bar.timestamp);
+        const hour = d.getUTCHours() - 5;
+        const minute = d.getUTCMinutes();
+        let h12 = hour;
+        const suffix = h12 >= 12 ? "PM" : "AM";
+        if (h12 === 0) h12 = 12;
+        else if (h12 > 12) h12 -= 12;
+        return {
+          time: `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`,
+          label: `${h12}:${minute.toString().padStart(2, "0")} ${suffix}`,
+          underlyingPrice: bar.close,
+        };
+      });
+
+      underlyingCacheRef.current.set(cacheKey, points);
+      setUnderlyingPoints(points);
+    } catch {
+      // Silently fail — underlying overlay is optional
+    } finally {
+      setUnderlyingLoading(false);
+    }
+  }, [ticker, viewedDate, date]);
+
+  // ─── Exit time handler — computes P&L from cached bar data ─────────
   const handleExitChange = useCallback((exitTime: string, exitDate: string) => {
     console.log("[exit-change]", { exitTime, exitDate });
-    // TODO: compute actual P&L at exit point and pass to SummaryCards
+    setExitSelection({ time: exitTime, date: exitDate });
   }, []);
 
   // ─── Event handlers (set state only — useEffect handles fetching) ──
@@ -385,19 +600,28 @@ export default function BacktestingPage() {
       setSelectedStrike(0); // ATM
       setReplayResult(null);
       setError(null);
+      setViewedDate(selection.date);
+      setExitSelection(null);
+      setExitPL(null);
       scrollOnNextResult.current = true;
     },
     [checkAndIncrement]
   );
 
-  /** Toggle call/put — immediate visual feedback, useEffect re-prices */
+  /** Toggle call/put — preserves viewedDate, only changes optionType (item 2 & 8) */
   const handleToggleRight = useCallback((right: Right) => {
     setSelectedRight(right);
+    // viewedDate stays the same — the useEffect will re-fetch with new right
+    // and the viewedDate preservation logic keeps the day navigator position
   }, []);
 
-  /** Expiry change from replay chips (receives a Date) */
+  /** Expiry change from replay chips — resets viewedDate to entry day (item 8) */
   const handleExpiryChange = useCallback((expiryDate: Date) => {
     setCurrentExpiry(expiryDate);
+    // New expiry = new day range, reset to entry day
+    if (date) setViewedDate(date);
+    setExitSelection(null);
+    setExitPL(null);
 
     // If switching to 0DTE, snap entry time to 11:30 if currently after
     if (moment) {
@@ -410,7 +634,7 @@ export default function BacktestingPage() {
         setEntryTimeOverride(undefined);
       }
     }
-  }, [moment]);
+  }, [moment, date]);
 
   /** Expiration change from chain snapshot (converts Expiration → Date) */
   const handleExpirationChange = useCallback(
@@ -428,11 +652,12 @@ export default function BacktestingPage() {
         expiry.setUTCDate(expiry.getUTCDate() + daysToFriday);
       }
       setCurrentExpiry(expiry);
+      if (date) setViewedDate(date);
     },
-    [moment]
+    [moment, date]
   );
 
-  /** User picks a specific strike from the chain snapshot */
+  /** User picks a specific strike from the chain snapshot — preserves viewedDate (item 8) */
   const handleReplayContract = useCallback((contract: SelectedContract) => {
     setSelectedStrike(contract.strike);
     setSelectedRight(contract.right);
@@ -469,7 +694,11 @@ export default function BacktestingPage() {
     setViewedDayDTE(undefined);
     setThetaDecayPrice(undefined);
     setEntryTimeOverride(undefined);
+    setUnderlyingPoints([]);
+    setExitSelection(null);
+    setExitPL(null);
     dayCacheRef.current.clear();
+    underlyingCacheRef.current.clear();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -566,6 +795,10 @@ export default function BacktestingPage() {
                       viewedDayDTE={viewedDayDTE}
                       thetaDecayPrice={thetaDecayPrice}
                       onExitChange={handleExitChange}
+                      exitPL={exitPL}
+                      underlyingPoints={underlyingPoints}
+                      underlyingLoading={underlyingLoading}
+                      onRequestUnderlying={handleRequestUnderlying}
                     />
                   </motion.div>
                 )}

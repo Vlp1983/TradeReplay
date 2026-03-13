@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { List } from "lucide-react";
@@ -19,6 +20,12 @@ export interface ExpiryOption {
   label: string;
   dte: number;
   type: "0DTE" | "weekly";
+}
+
+interface UnderlyingPoint {
+  time: string;
+  label: string;
+  underlyingPrice: number;
 }
 
 interface ContractReplayProps {
@@ -56,6 +63,16 @@ interface ContractReplayProps {
   thetaDecayPrice?: number;
   /** Called when user sets an exit time/date */
   onExitChange?: (exitTime: string, exitDate: string) => void;
+  /** Exit P&L computed by parent */
+  exitPL?: { premium: number; dollar: number; pct: number } | null;
+
+  // ─── Underlying overlay ──────────────────────────────────────────
+  /** Underlying intraday points for the overlay */
+  underlyingPoints?: UnderlyingPoint[];
+  /** True while fetching underlying data */
+  underlyingLoading?: boolean;
+  /** Called to request underlying data for overlay */
+  onRequestUnderlying?: () => void;
 }
 
 export function ContractReplay({
@@ -77,6 +94,10 @@ export function ContractReplay({
   viewedDayDTE,
   thetaDecayPrice,
   onExitChange,
+  exitPL,
+  underlyingPoints,
+  underlyingLoading,
+  onRequestUnderlying,
 }: ContractReplayProps) {
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
@@ -246,6 +267,9 @@ export function ContractReplay({
           isMultiDay={isMultiDay}
           entryPremium={metrics.entryPremium}
           thetaDecayPrice={thetaDecayPrice}
+          underlyingPoints={underlyingPoints}
+          underlyingLoading={underlyingLoading}
+          onRequestUnderlying={onRequestUnderlying}
         />
         {chartLoading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-surface/70 z-10">
@@ -257,9 +281,9 @@ export function ContractReplay({
         )}
       </div>
 
-      {/* 3. Trade Summary (entry details + secondary if-held-to-close) */}
+      {/* 3. Trade Summary (entry details + exit P&L + secondary if-held-to-close) */}
       <div className={`mb-5 ${loading ? "opacity-50" : ""}`}>
-        <SummaryCards metrics={metrics} right={selectedRight} />
+        <SummaryCards metrics={metrics} right={selectedRight} exitPL={exitPL} />
       </div>
 
       {/* 4. Exit time picker */}
@@ -272,19 +296,21 @@ export function ContractReplay({
         />
       </div>
 
-      {/* 5. Key Insights — trade moments */}
-      <div className="mb-5">
-        <KeyMomentsList moments={keyMoments} />
-      </div>
-
-      {/* What Happened & Why — AI-generated contextual analysis */}
+      {/* 5. Key Insights — data-driven observations + AI analysis */}
       <div className="mb-5">
         <InsightsPanel
           insights={result.insights}
           source={result.insightsSource}
           ticker={contract.ticker}
           date={contract.date}
+          chartPoints={chartPoints}
+          metrics={metrics}
         />
+      </div>
+
+      {/* 6. Key moments timeline */}
+      <div className="mb-5">
+        <KeyMomentsList moments={keyMoments} />
       </div>
 
       {/* Deep Dive — strategy-specific AI analysis */}

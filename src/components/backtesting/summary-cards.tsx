@@ -5,8 +5,8 @@ import type { ReplayMetrics, Right } from "@/lib/engine/types";
 interface SummaryCardsProps {
   metrics: ReplayMetrics;
   right: Right;
-  /** If set, show actual P&L at exit in the result row */
-  exitPL?: { dollar: number; pct: number } | null;
+  /** If set, show actual P&L at exit in a "Your Trade" section */
+  exitPL?: { premium: number; dollar: number; pct: number } | null;
 }
 
 function dual(perShare: number): string {
@@ -21,14 +21,13 @@ function dualPL(perContract: number): string {
 
 export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
   const isCall = right === "call";
-  const directionEmoji = isCall ? "\u{1F4C8}" : "\u{1F4C9}";
   const directionLabel = isCall ? "CALL" : "PUT";
 
   // Entry-only rows — facts known at trade entry
   const entryRows: { label: string; value: string; color?: string }[] = [
     {
       label: "Direction",
-      value: `${directionEmoji} ${directionLabel}`,
+      value: directionLabel,
       color: isCall ? "text-green-400" : "text-red-400",
     },
     {
@@ -40,19 +39,12 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
       value: `${(metrics.ivAtEntry * 100).toFixed(0)}%`,
     },
     {
-      label: "Greeks at Entry",
-      value: `\u0394 ${metrics.deltaAtEntry.toFixed(2)}  \u0393 ${metrics.gammaAtEntry.toFixed(4)}  \u0398 ${metrics.thetaAtEntry.toFixed(2)}  \u03BD ${metrics.vegaAtEntry.toFixed(3)}`,
-    },
-    {
       label: "DTE at Entry",
       value: `${metrics.dteAtEntry} day${metrics.dteAtEntry !== 1 ? "s" : ""}`,
     },
   ];
 
   // Secondary rows — require scanning bars / assume held to close
-  const resultPL = exitPL ? exitPL.dollar : metrics.exitAtClosePL;
-  const resultLabel = resultPL >= 0 ? "Profit" : "Loss";
-
   const secondaryRows: { label: string; value: string; color?: string }[] = [
     {
       label: "Exit Premium",
@@ -74,10 +66,8 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
     },
     {
       label: "Result",
-      value: exitPL
-        ? `${resultLabel} of ${dualPL(exitPL.dollar)} (${exitPL.pct >= 0 ? "+" : ""}${exitPL.pct.toFixed(1)}%)`
-        : `${resultLabel} of ${dualPL(metrics.exitAtClosePL)} (if held to close)`,
-      color: resultPL >= 0 ? "text-success" : "text-danger",
+      value: `${metrics.exitAtClosePL >= 0 ? "Profit" : "Loss"} of ${dualPL(metrics.exitAtClosePL)} (if held to close)`,
+      color: metrics.exitAtClosePL >= 0 ? "text-success" : "text-danger",
     },
   ];
 
@@ -98,6 +88,54 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
           </li>
         ))}
       </ul>
+
+      {/* Greeks grid */}
+      <div className="mt-3 grid grid-cols-4 gap-3 rounded-lg border border-border bg-surface/50 px-4 py-3">
+        <div className="flex flex-col">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Delta</span>
+          <span className="text-[14px] font-semibold text-text-primary">{metrics.deltaAtEntry.toFixed(2)}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Gamma</span>
+          <span className="text-[14px] font-semibold text-text-primary">{metrics.gammaAtEntry.toFixed(3)}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Theta</span>
+          <span className="text-[14px] font-semibold text-text-primary">${(metrics.thetaAtEntry * 100).toFixed(2)}/day</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Vega</span>
+          <span className="text-[14px] font-semibold text-text-primary">{metrics.vegaAtEntry.toFixed(3)}</span>
+        </div>
+      </div>
+
+      {/* Your Trade section — shown when exit P&L is available */}
+      {exitPL && (
+        <>
+          <div className="my-3 border-t border-border" />
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-accent">
+            Your Trade
+          </p>
+          <ul className="space-y-2">
+            <li className="flex flex-wrap gap-x-2 text-[13px]">
+              <span className="font-medium text-text-muted">Exit Premium:</span>
+              <span className="font-semibold text-text-primary">{dual(exitPL.premium)}</span>
+            </li>
+            <li className="flex flex-wrap gap-x-2 text-[13px]">
+              <span className="font-medium text-text-muted">P&L:</span>
+              <span className={`font-semibold ${exitPL.dollar >= 0 ? "text-green-400" : "text-red-400"}`}>
+                {dualPL(exitPL.dollar)}
+              </span>
+            </li>
+            <li className="flex flex-wrap gap-x-2 text-[13px]">
+              <span className="font-medium text-text-muted">Return:</span>
+              <span className={`font-semibold ${exitPL.pct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                {exitPL.pct >= 0 ? "+" : ""}{exitPL.pct.toFixed(1)}% on premium paid
+              </span>
+            </li>
+          </ul>
+        </>
+      )}
 
       {/* Separator */}
       <div className="my-3 border-t border-border" />
