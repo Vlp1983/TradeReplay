@@ -36,9 +36,10 @@ function saveRecentTicker(ticker: string) {
   }
 }
 
-// ─── Build searchable ticker list once ──────────────────────────────
+// ─── Build searchable ticker list + set for O(1) lookup ─────────────
 
 const ALL_TICKERS = getAllTickers().map((cfg) => cfg.ticker);
+const TICKER_SET = new Set(ALL_TICKERS);
 
 interface MomentPickerProps {
   onLoadChain: (selection: MomentSelection) => void;
@@ -71,11 +72,13 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
   const [date, setDate] = useState(() => tradingDays[0] ?? "");
   const [entryTime, setEntryTime] = useState("10:00");
   const [recentTickers, setRecentTickers] = useState<string[]>([]);
+  const [unknownTicker, setUnknownTicker] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const hasLoadedRef = useRef(false);
   const autoChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unknownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Hydration safety: if SSR date doesn't match any client-side trading day,
   // snap to the first available trading day.
@@ -235,20 +238,38 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
                 const val = e.target.value.toUpperCase();
                 setQuery(val);
                 setShowDropdown(true);
-                if (val !== ticker) {
-                  // Auto-select if typed value exactly matches a known ticker
-                  if (ALL_TICKERS.includes(val)) {
-                    selectTicker(val);
-                  } else {
-                    setTicker("");
+                // Clear unknown warning immediately on new typing
+                setUnknownTicker(false);
+                if (unknownTimerRef.current) clearTimeout(unknownTimerRef.current);
+
+                // Auto-select if typed value exactly matches a known ticker (case-insensitive)
+                if (TICKER_SET.has(val)) {
+                  selectTicker(val);
+                } else {
+                  setTicker("");
+                  // Debounced unknown ticker check (500ms)
+                  if (val.trim().length > 0) {
+                    unknownTimerRef.current = setTimeout(() => {
+                      // Re-check: no match in filtered results
+                      const q = val.trim();
+                      const hasMatch = ALL_TICKERS.some((t) => t.startsWith(q) || t.includes(q));
+                      if (!hasMatch) setUnknownTicker(true);
+                    }, 500);
                   }
                 }
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   const q = query.trim().toUpperCase();
-                  if (!ticker && q && ALL_TICKERS.includes(q)) {
+                  // Exact match: select immediately
+                  if (q && TICKER_SET.has(q)) {
                     selectTicker(q);
+                    return;
+                  }
+                  // Single filtered result: auto-select it
+                  if (q && filteredTickers.length === 1) {
+                    selectTicker(filteredTickers[0]);
+                    return;
                   }
                 }
               }}
@@ -261,7 +282,7 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
             />
             {query && (
               <button
-                onClick={() => { setQuery(""); setTicker(""); inputRef.current?.focus(); }}
+                onClick={() => { setQuery(""); setTicker(""); setUnknownTicker(false); inputRef.current?.focus(); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
               >
                 <X className="h-3.5 w-3.5" />
@@ -314,6 +335,11 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
               </div>
             )}
           </div>
+          {unknownTicker && !ticker && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              Options Replay monitors the 500 most actively traded tickers with options. Try SPY, AAPL, TSLA, or NVDA.
+            </p>
+          )}
         </div>
 
         {/* Date */}

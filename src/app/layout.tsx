@@ -5,7 +5,7 @@ import { Navbar } from "@/components/Navbar";
 import { GuestNudgeBanner } from "@/components/GuestNudgeBanner";
 
 export const metadata: Metadata = {
-  title: "TradeReplay — Options Replay Platform",
+  title: "Options Replay — Options Replay Platform",
   description:
     "Backtest options contracts from any past moment. Pick calls or puts, replay the contract, and see exactly what would have happened.",
 };

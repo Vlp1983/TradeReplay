@@ -75,7 +75,7 @@ export function Footer() {
         <Separator className="my-8" />
 
         <p className="text-[12px] leading-relaxed text-text-muted">
-          TradeReplay is for educational and analytical purposes only and does
+          Options Replay is for educational and analytical purposes only and does
           not provide investment advice. Past performance is not indicative of
           future results.
         </p>

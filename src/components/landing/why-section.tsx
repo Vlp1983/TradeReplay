@@ -15,7 +15,7 @@ export function WhySection() {
           understanding what worked. That&apos;s how most people trade today.
         </p>
         <p className="mt-4 text-base leading-relaxed text-text-secondary">
-          TradeReplay gives you the equivalent of film study for Options:
+          Options Replay gives you the equivalent of film study for Options:
           replay what happened after a specific entry moment, identify key
           turning points, and learn from every trade.
         </p>

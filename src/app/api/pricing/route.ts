@@ -63,7 +63,11 @@ export async function POST(request: NextRequest) {
       })),
     };
 
-    return NextResponse.json(serialized);
+    return NextResponse.json(serialized, {
+      headers: {
+        "Cache-Control": "s-maxage=300, stale-while-revalidate=60",
+      },
+    });
   } catch (err) {
     console.error("[/api/pricing] Error:", err);
     return NextResponse.json(

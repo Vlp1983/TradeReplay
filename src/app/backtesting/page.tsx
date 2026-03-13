@@ -638,27 +638,54 @@ export default function BacktestingPage() {
   const handleParamChange = useCallback(
     (selection: MomentSelection) => {
       const prevDate = moment?.date;
+      const prevTicker = moment?.ticker;
+
+      // Full reset when ticker or date changes (not just entry time)
+      const majorChange = selection.ticker !== prevTicker || selection.date !== prevDate;
+
+      if (majorChange) {
+        mainFetchId.current++;
+        dayFetchId.current = 0;
+        setError(null);
+        setExitSelection(null);
+        setExitPL(null);
+        setUnderlyingPoints([]);
+        setUnderlyingLoading(false);
+        dayCacheRef.current.clear();
+        underlyingCacheRef.current.clear();
+        setViewedDayPoints(null);
+        setViewedDayDTE(undefined);
+        setThetaDecayPrice(undefined);
+      }
+
       setMoment(selection);
 
-      // If date changed, resolve new default expiry and reset strike to ATM
       if (selection.date !== prevDate) {
         setCurrentExpiry(resolveDefaultExpiry(selection.date));
         setSelectedStrike(0);
         setViewedDate(selection.date);
       }
+
+      // Update paramsRef synchronously
+      paramsRef.current = {
+        ...paramsRef.current,
+        ticker: selection.ticker,
+        date: selection.date,
+        entryTime: selection.entryTime,
+      };
     },
-    [moment?.date]
+    [moment?.date, moment?.ticker]
   );
 
-  /** Toggle call/put — preserves viewedDate, only changes optionType (item 2 & 8) */
+  /** Toggle call/put — preserves viewedDate and old chart (overlay shows "Repricing...") */
   const handleToggleRight = useCallback((right: Right) => {
+    // Update paramsRef synchronously before any async work
+    paramsRef.current = { ...paramsRef.current, selectedRight: right };
     setSelectedRight(right);
-    setReplayResult(null);
     setError(null);
+    // DON'T clear replayResult — old chart stays visible with loading overlay
     // Invalidate pending fetches — the useEffect on selectedRight will re-trigger
     mainFetchId.current++;
-    // viewedDate stays the same — the useEffect will re-fetch with new right
-    // and the viewedDate preservation logic keeps the day navigator position
   }, []);
 
   /** Expiry change from replay chips — resets viewedDate to entry day (item 8) */

@@ -20,7 +20,7 @@ export function Navbar() {
       <div className="mx-auto flex h-full max-w-content items-center justify-between px-4 md:px-6">
         {/* Wordmark */}
         <Link href="/" className="text-xl font-bold text-text-primary">
-          TradeReplay
+          Options Replay
         </Link>
 
         {/* Desktop nav */}

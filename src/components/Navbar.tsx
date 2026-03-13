@@ -39,7 +39,7 @@ export function Navbar() {
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <TrendingUp size={18} className="text-white" />
             </div>
-            <span className="text-lg">TradeReplay</span>
+            <span className="text-lg">Options Replay</span>
           </Link>
 
           <div className="hidden md:flex items-center gap-1">

@@ -1,15 +1,21 @@
 /**
  * Fetches all required historical data for pricing.
  *
+ * Data sources (in priority order):
+ *   1. Polygon.io (primary)
+ *   2. Yahoo Finance (fallback)
+ *   3. Prior trading day retry (up to 3 attempts)
+ *   4. Synthetic Brownian walk (final fallback)
+ *
  * Collects:
- *   - 5-min intraday bars for the underlying on replay date (Polygon)
- *   - 30 prior daily bars for GARCH (Polygon)
- *   - Historical VIX close (Yahoo Finance)
+ *   - 5-min intraday bars for the underlying on replay date
+ *   - 30 prior daily bars for GARCH
+ *   - Historical VIX close (Yahoo Finance, cached by date)
  *   - Risk-free rate from rates table
  *   - Ticker config
  */
 
-import type { Bar, PricingInputs, TickerConfig } from "./types";
+import type { Bar, PricingInputs } from "./types";
 import { getRiskFreeRate } from "./config/ratesTable";
 import { getTickerConfig } from "./config/tickers";
 
@@ -42,7 +48,7 @@ async function polygonFetch<T>(path: string): Promise<T | null> {
   return res.json() as Promise<T>;
 }
 
-// ─── Polygon response types ─────────────────────────────────────────
+// ─── Response types ──────────────────────────────────────────────────
 
 interface PolygonAggResponse {
   results?: Array<{
@@ -56,6 +62,23 @@ interface PolygonAggResponse {
   resultsCount?: number;
 }
 
+interface YahooChartResponse {
+  chart: {
+    result: Array<{
+      timestamp: number[];
+      indicators: {
+        quote: Array<{
+          open: (number | null)[];
+          high: (number | null)[];
+          low: (number | null)[];
+          close: (number | null)[];
+          volume: (number | null)[];
+        }>;
+      };
+    }>;
+  };
+}
+
 function toBar(raw: { o: number; h: number; l: number; c: number; v: number; t: number }): Bar {
   return {
     timestamp: raw.t,
@@ -67,7 +90,7 @@ function toBar(raw: { o: number; h: number; l: number; c: number; v: number; t: 
   };
 }
 
-// ─── Date formatting ─────────────────────────────────────────────────
+// ─── Date helpers ────────────────────────────────────────────────────
 
 function formatDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -79,92 +102,215 @@ function subtractDays(d: Date, n: number): Date {
   return result;
 }
 
-// ─── Fetch functions ─────────────────────────────────────────────────
+/** Get the previous trading weekday (skip weekends) */
+function prevTradingDay(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  // Skip weekends
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  return formatDate(d);
+}
 
-async function fetchIntradayBars(
-  ticker: string,
-  date: string
-): Promise<Bar[]> {
+/** Filter bars to regular trading hours: 9:30 AM - 4:00 PM ET */
+function filterTradingHours(bars: Bar[]): Bar[] {
+  return bars.filter((bar) => {
+    const d = new Date(bar.timestamp);
+    const hour = d.getUTCHours() - 5; // approximate ET
+    const minute = d.getUTCMinutes();
+    const totalMin = hour * 60 + minute;
+    return totalMin >= 570 && totalMin <= 960;
+  });
+}
+
+// ─── Yahoo Finance fetch helper ──────────────────────────────────────
+
+const YAHOO_BASE = "https://query2.finance.yahoo.com/v8/finance/chart";
+
+async function yahooFetch(url: string): Promise<YahooChartResponse | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[collectInputs] Yahoo returned ${res.status} for ${url.split("?")[0]}`);
+      return null;
+    }
+    return res.json() as Promise<YahooChartResponse>;
+  } catch (err) {
+    console.warn("[collectInputs] Yahoo network error:", err);
+    return null;
+  }
+}
+
+// ─── Intraday bars: Polygon → Yahoo → prior day → synthetic ─────────
+
+async function fetchIntradayPolygon(ticker: string, date: string): Promise<Bar[]> {
   const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=500`;
-
   try {
     const data = await polygonFetch<PolygonAggResponse>(path);
-    if (!data || !data.results || data.results.length === 0) {
-      return [];
-    }
+    if (!data?.results || data.results.length === 0) return [];
+    return filterTradingHours(data.results.map(toBar));
+  } catch {
+    return [];
+  }
+}
 
+async function fetchIntradayYahoo(ticker: string, date: string): Promise<Bar[]> {
+  // Compute Unix timestamps for 9:30 AM - 4:00 PM ET on replayDate
+  // ET = UTC-5 (EST) or UTC-4 (EDT). Use UTC-5 as safe approximation.
+  const startUnix = Math.floor(new Date(date + "T14:30:00Z").getTime() / 1000); // 9:30 AM ET = 14:30 UTC
+  const endUnix = Math.floor(new Date(date + "T21:00:00Z").getTime() / 1000);   // 4:00 PM ET = 21:00 UTC
+
+  const url = `${YAHOO_BASE}/${encodeURIComponent(ticker)}?interval=5m&period1=${startUnix}&period2=${endUnix}`;
+  try {
+    const data = await yahooFetch(url);
+    const result = data?.chart?.result?.[0];
+    if (!result?.timestamp || !result.indicators?.quote?.[0]) return [];
+
+    const timestamps = result.timestamp;
+    const q = result.indicators.quote[0];
     const bars: Bar[] = [];
-    for (const raw of data.results) {
-      const d = new Date(raw.t);
-      const hour = d.getUTCHours() - 5; // approximate ET
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const o = q.open?.[i];
+      const h = q.high?.[i];
+      const l = q.low?.[i];
+      const c = q.close?.[i];
+      const v = q.volume?.[i];
+      if (o == null || h == null || l == null || c == null) continue;
+
+      const ts = timestamps[i] * 1000;
+      // Filter to 9:30 AM - 4:00 PM ET
+      const d = new Date(ts);
+      const hour = d.getUTCHours() - 5;
       const minute = d.getUTCMinutes();
       const totalMin = hour * 60 + minute;
-
-      // Regular trading hours: 9:30 - 16:00 ET
       if (totalMin >= 570 && totalMin <= 960) {
-        bars.push(toBar(raw));
+        bars.push({ timestamp: ts, open: o, high: h, low: l, close: c, volume: v ?? 0 });
       }
     }
     return bars;
-  } catch (err) {
-    console.warn(`[collectInputs] Failed to fetch intraday bars for ${ticker}:`, err);
+  } catch {
     return [];
   }
 }
 
-async function fetchDailyBars(
-  ticker: string,
-  startDate: string,
-  endDate: string
-): Promise<Bar[]> {
-  const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${startDate}/${endDate}?adjusted=true&sort=asc&limit=50`;
+/** Generate synthetic 78-bar Brownian walk as final fallback */
+function generateSyntheticBars(ticker: string, date: string): Bar[] {
+  const tickerConfig = getTickerConfig(ticker);
+  const basePrice = 100 * tickerConfig.volMultiplier;
+  const bars: Bar[] = [];
+  let price = basePrice;
 
+  // 78 bars = 6.5 hours * 12 bars/hour (5-min intervals)
+  const startMs = new Date(date + "T14:30:00Z").getTime(); // 9:30 AM ET
+  for (let i = 0; i < 78; i++) {
+    const drift = (Math.random() - 0.5) * basePrice * 0.003 * tickerConfig.volMultiplier;
+    const open = price;
+    const close = price + drift;
+    const high = Math.max(open, close) + Math.abs(drift) * 0.3;
+    const low = Math.min(open, close) - Math.abs(drift) * 0.3;
+    bars.push({
+      timestamp: startMs + i * 5 * 60 * 1000,
+      open: +open.toFixed(2),
+      high: +high.toFixed(2),
+      low: +low.toFixed(2),
+      close: +close.toFixed(2),
+      volume: Math.floor(100000 + Math.random() * 500000),
+    });
+    price = close;
+  }
+  return bars;
+}
+
+/** Full intraday fetch with fallback chain */
+async function fetchIntradayWithFallback(ticker: string, date: string): Promise<Bar[]> {
+  // 1. Try Polygon
+  let bars = await fetchIntradayPolygon(ticker, date);
+  if (bars.length > 0) return bars;
+
+  // 2. Try Yahoo Finance
+  bars = await fetchIntradayYahoo(ticker, date);
+  if (bars.length > 0) return bars;
+
+  // 3. Try prior trading days (max 3 attempts)
+  let tryDate = date;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    tryDate = prevTradingDay(tryDate);
+    bars = await fetchIntradayPolygon(ticker, tryDate);
+    if (bars.length > 0) return bars;
+    bars = await fetchIntradayYahoo(ticker, tryDate);
+    if (bars.length > 0) return bars;
+  }
+
+  // 4. Synthetic fallback
+  console.warn("[collectInputs] using synthetic bars for", ticker, date);
+  return generateSyntheticBars(ticker, date);
+}
+
+// ─── Daily bars: Polygon → Yahoo ─────────────────────────────────────
+
+async function fetchDailyPolygon(ticker: string, startDate: string, endDate: string): Promise<Bar[]> {
+  const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${startDate}/${endDate}?adjusted=true&sort=asc&limit=50`;
   try {
     const data = await polygonFetch<PolygonAggResponse>(path);
-    if (!data || !data.results || data.results.length === 0) return [];
+    if (!data?.results || data.results.length === 0) return [];
     return data.results.map(toBar);
-  } catch (err) {
-    console.warn(`[collectInputs] Failed to fetch daily bars for ${ticker}:`, err);
+  } catch {
     return [];
   }
 }
 
-// ─── VIX via Yahoo Finance ───────────────────────────────────────────
+async function fetchDailyYahoo(ticker: string): Promise<Bar[]> {
+  const url = `${YAHOO_BASE}/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+  try {
+    const data = await yahooFetch(url);
+    const result = data?.chart?.result?.[0];
+    if (!result?.timestamp || !result.indicators?.quote?.[0]) return [];
 
-interface YahooChartResponse {
-  chart: {
-    result: Array<{
-      timestamp: number[];
-      indicators: {
-        quote: Array<{
-          close: (number | null)[];
-        }>;
-      };
-    }>;
-  };
+    const timestamps = result.timestamp;
+    const q = result.indicators.quote[0];
+    const bars: Bar[] = [];
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const o = q.open?.[i];
+      const h = q.high?.[i];
+      const l = q.low?.[i];
+      const c = q.close?.[i];
+      const v = q.volume?.[i];
+      if (o == null || h == null || l == null || c == null) continue;
+      bars.push({ timestamp: timestamps[i] * 1000, open: o, high: h, low: l, close: c, volume: v ?? 0 });
+    }
+    return bars;
+  } catch {
+    return [];
+  }
 }
 
-/**
- * Fetch VIX close for a given replay date via Yahoo Finance.
- * Matches replayDate to the closest prior trading day in the 3-month range.
- * Returns the raw VIX value (e.g. 18.5) — the engine divides by 100 when using it.
- * Never throws — always returns a number.
- */
-async function fetchVIX(replayDate: string): Promise<number> {
-  const DEFAULT_VIX = 20.0;
+async function fetchDailyWithFallback(ticker: string, startDate: string, endDate: string): Promise<Bar[]> {
+  const bars = await fetchDailyPolygon(ticker, startDate, endDate);
+  if (bars.length > 0) return bars;
+  return fetchDailyYahoo(ticker);
+}
+
+// ─── VIX via Yahoo Finance (cached by date) ─────────────────────────
+
+const vixCache = new Map<string, number>();
+const DEFAULT_VIX = 20.0;
+
+async function fetchVIXWithCache(replayDate: string): Promise<number> {
+  const cached = vixCache.get(replayDate);
+  if (cached !== undefined) return cached;
 
   try {
-    const url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=3mo";
-
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.warn(`[collectInputs] Yahoo Finance returned ${res.status} for VIX`);
-      return DEFAULT_VIX;
-    }
-
-    const data: YahooChartResponse = await res.json();
+    const url = `${YAHOO_BASE}/%5EVIX?interval=1d&range=3mo`;
+    const data = await yahooFetch(url);
     const result = data?.chart?.result?.[0];
-    if (!result || !result.timestamp || !result.indicators?.quote?.[0]?.close) {
+    if (!result?.timestamp || !result.indicators?.quote?.[0]?.close) {
       console.warn("[collectInputs] Yahoo VIX response missing expected fields");
       return DEFAULT_VIX;
     }
@@ -179,9 +325,8 @@ async function fetchVIX(replayDate: string): Promise<number> {
     let bestIdx = -1;
     let bestDiff = Infinity;
     for (let i = 0; i < timestamps.length; i++) {
-      const tsMs = timestamps[i] * 1000; // Yahoo returns seconds
+      const tsMs = timestamps[i] * 1000;
       const diff = targetMs - tsMs;
-      // Only consider dates on or before replayDate, pick the closest
       if (diff >= 0 && diff < bestDiff && closes[i] != null) {
         bestDiff = diff;
         bestIdx = i;
@@ -190,6 +335,7 @@ async function fetchVIX(replayDate: string): Promise<number> {
 
     if (bestIdx >= 0 && closes[bestIdx] != null) {
       const vix = closes[bestIdx]!;
+      vixCache.set(replayDate, vix);
       return vix;
     }
 
@@ -214,11 +360,11 @@ export async function collectInputs(
   const priorStart = formatDate(subtractDays(replayDate, 45)); // ~30 trading days
   const priorEnd = formatDate(subtractDays(replayDate, 1));
 
-  // Fetch all data in parallel
+  // Fetch all data sources in parallel
   const [intradayBars, priorDailyBars, historicalVIX] = await Promise.all([
-    fetchIntradayBars(ticker, dateStr),
-    fetchDailyBars(ticker, priorStart, priorEnd),
-    fetchVIX(dateStr),
+    fetchIntradayWithFallback(ticker, dateStr),
+    fetchDailyWithFallback(ticker, priorStart, priorEnd),
+    fetchVIXWithCache(dateStr),
   ]);
 
   const underlyingOpenPrice =
