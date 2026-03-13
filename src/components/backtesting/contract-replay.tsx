@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { List, Lightbulb, TrendingUp, TrendingDown, Target, Users } from "lucide-react";
@@ -192,28 +191,10 @@ export function ContractReplay({
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
 
-  const contractLabel = `${contract.ticker} ${contract.strike}${selectedRight === "call" ? "C" : "P"}`;
   const isMultiDay = toExpirationPoints.some((p) => p.dayIndex > 0);
 
   // Use selectedRight from parent for immediate visual toggle feedback
   const isCall = selectedRight === "call";
-
-  // Derive expiry label from selected expiry or fallback with formatted date
-  const selectedExpiry = availableExpiries?.find(
-    (e) => e.date === selectedExpiryISO
-  );
-  const expLabel = useMemo(() => {
-    if (selectedExpiry?.label) return selectedExpiry.label;
-    // Format the ISO date to "Fri Feb 27" style instead of raw "friday"
-    if (selectedExpiryISO) {
-      const d = new Date(selectedExpiryISO);
-      const dayName = d.toLocaleString("en-US", { weekday: "short", timeZone: "UTC" });
-      const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
-      const day = d.getUTCDate();
-      return `${dayName} ${month} ${day}`;
-    }
-    return contract.expiration;
-  }, [selectedExpiry, selectedExpiryISO, contract.expiration]);
 
   // Compute expiry date string for exit picker
   const expiryDateStr = selectedExpiryISO
@@ -263,122 +244,137 @@ export function ContractReplay({
     return `${h}:${m} ${suffix}`;
   }, [contract.entryTime]);
 
+  // ─── Conversational header text ─────────────────────────────────
+  const entryDateLabel = useMemo(() => {
+    const d = new Date(contract.date + "T12:00:00Z");
+    const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+    const day = d.getUTCDate();
+    return `${month} ${day}`;
+  }, [contract.date]);
+
+  const entryPremiumLabel = `$${(metrics.entryPremium * 100).toFixed(0)}`;
+  const dirWord = isCall ? "Call" : "Put";
+  const line1 = `You bought a ${contract.ticker} $${contract.strike} ${dirWord} for ${entryPremiumLabel} on ${entryDateLabel} @ ${to12Hour(contract.entryTime)}.`;
+
+  const line2 = useMemo(() => {
+    const vd = viewedDate || contract.date;
+    if (vd === contract.date) return "Here\u2019s what happened from your entry.";
+    if (vd === expiryDateStr) {
+      const d = new Date(vd + "T12:00:00Z");
+      const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+      const day = d.getUTCDate();
+      return `This is expiration day \u2014 ${month} ${day}.`;
+    }
+    // Calculate days after entry
+    const entryMs = new Date(contract.date + "T12:00:00Z").getTime();
+    const viewMs = new Date(vd + "T12:00:00Z").getTime();
+    const daysDiff = Math.round((viewMs - entryMs) / 86400000);
+    const vDate = new Date(vd + "T12:00:00Z");
+    const month = vDate.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+    const day = vDate.getUTCDate();
+    return `Checking in on ${month} ${day} \u2014 ${daysDiff} day${daysDiff !== 1 ? "s" : ""} after entry.`;
+  }, [viewedDate, contract.date, expiryDateStr]);
+
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
-      {/* Header */}
-      <div className="mb-1 flex items-center gap-2">
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-[13px] font-semibold text-accent">
-          2
-        </span>
-        <h2 className="text-lg font-semibold text-text-primary">
-          Your Results
-        </h2>
-        {chartLoading && (
-          <div className="flex items-center gap-1.5 ml-2">
-            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-            <span className="text-[12px] text-text-muted">Repricing...</span>
-          </div>
-        )}
-      </div>
-
       {/* Error banner */}
       {error && (
-        <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-[13px] text-red-400">
+        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-[13px] text-red-400">
           {error}
         </div>
       )}
 
-      {/* 1. Call / Put toggle + contract info + select another strike */}
-      <div className="mt-3 mb-4 rounded-lg border border-border bg-bg px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Call / Put toggle */}
-            <div className={`flex rounded-lg border border-border p-0.5 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
-              <button
-                onClick={() => onToggleRight("call")}
-                disabled={loading}
-                className={`rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                  isCall
-                    ? "bg-green-500/15 text-green-400"
-                    : "text-text-muted hover:text-text-primary"
-                }`}
-              >
-                Call
-              </button>
-              <button
-                onClick={() => onToggleRight("put")}
-                disabled={loading}
-                className={`rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                  !isCall
-                    ? "bg-red-500/15 text-red-400"
-                    : "text-text-muted hover:text-text-primary"
-                }`}
-              >
-                Put
-              </button>
-            </div>
-
-            {/* Contract details */}
-            <span className="text-sm font-semibold text-text-primary">
-              {contractLabel}
+      {/* Conversational header */}
+      <div className="mb-4">
+        <p className="text-[15px] font-medium text-text-primary leading-relaxed">
+          {line1}
+          {chartLoading && (
+            <span className="ml-2 inline-flex items-center gap-1 align-middle">
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+              <span className="text-[12px] text-text-muted">Repricing...</span>
             </span>
-            <Badge className="bg-accent/15 text-accent border-0 text-[10px] font-semibold">
-              ATM
-            </Badge>
-            <span className="text-[13px] text-text-muted">
-              Exp {expLabel}
-            </span>
-            <span className="text-[13px] text-text-muted">
-              Entry {to12Hour(contract.entryTime)} ET
-            </span>
-            {displayDTE > 0 && (
-              <span className="text-[13px] text-text-muted">
-                {displayDTE} DTE
-              </span>
-            )}
-          </div>
-
-          {/* Select Another Strike — prominent */}
-          <Button
-            variant="outline"
-            onClick={onPickAnother}
-            disabled={loading}
-            className="gap-1.5 border-accent/30 text-accent hover:bg-accent/10 hover:text-accent"
-          >
-            <List className="h-3.5 w-3.5" />
-            Select Another Strike
-          </Button>
-        </div>
-
-        {/* Expiry selector chips */}
-        {availableExpiries && availableExpiries.length > 0 && onExpiryChange && (
-          <div className={`mt-3 flex flex-wrap items-center gap-2 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
-            <span className="text-[12px] font-medium text-text-muted">
-              Expiry:
-            </span>
-            {availableExpiries.map((exp) => {
-              const isActive = exp.date === selectedExpiryISO;
-              return (
-                <button
-                  key={exp.date}
-                  disabled={loading}
-                  onClick={() => onExpiryChange(new Date(exp.date))}
-                  className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
-                    isActive
-                      ? "bg-accent text-white"
-                      : "border border-border text-text-secondary hover:border-accent/40 hover:text-text-primary"
-                  }`}
-                >
-                  {exp.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
+          )}
+        </p>
+        <p className="mt-1 text-[14px] text-text-secondary">{line2}</p>
       </div>
 
-      {/* Day navigator (multi-day trades only) */}
+      {/* Inline controls row */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        {/* Call / Put toggle */}
+        <div className={`flex rounded-lg border border-border p-0.5 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
+          <button
+            onClick={() => onToggleRight("call")}
+            disabled={loading}
+            className={`rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+              isCall
+                ? "bg-green-500/15 text-green-400"
+                : "text-text-muted hover:text-text-primary"
+            }`}
+          >
+            Call
+          </button>
+          <button
+            onClick={() => onToggleRight("put")}
+            disabled={loading}
+            className={`rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+              !isCall
+                ? "bg-red-500/15 text-red-400"
+                : "text-text-muted hover:text-text-primary"
+            }`}
+          >
+            Put
+          </button>
+        </div>
+
+        {/* Expiry chips inline */}
+        {availableExpiries && availableExpiries.length > 0 && onExpiryChange && (
+          <>
+            <span className="text-text-muted text-[13px]">&middot;</span>
+            <div className={`flex flex-wrap items-center gap-2 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
+              <span className="text-[12px] font-medium text-text-muted">Expiry:</span>
+              {availableExpiries.map((exp) => {
+                const isActive = exp.date === selectedExpiryISO;
+                return (
+                  <button
+                    key={exp.date}
+                    disabled={loading}
+                    onClick={() => onExpiryChange(new Date(exp.date))}
+                    className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                      isActive
+                        ? "bg-accent text-white"
+                        : "border border-border text-text-secondary hover:border-accent/40 hover:text-text-primary"
+                    }`}
+                  >
+                    {exp.label}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* Select Another Strike */}
+        <span className="text-text-muted text-[13px]">&middot;</span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onPickAnother}
+          disabled={loading}
+          className="gap-1.5 border-accent/30 text-accent hover:bg-accent/10 hover:text-accent text-[12px] h-8"
+        >
+          <List className="h-3 w-3" />
+          Change Strike
+        </Button>
+
+        {displayDTE > 0 && (
+          <>
+            <span className="text-text-muted text-[13px]">&middot;</span>
+            <span className="text-[13px] text-text-muted">{displayDTE} DTE</span>
+          </>
+        )}
+      </div>
+
+      {/* Day navigator (multi-day trades only) — inline below controls */}
       {tradingDays && tradingDays.length > 1 && viewedDate && onViewedDateChange && (
         <div className={`mb-4 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
           <DayNavigator
@@ -539,7 +535,7 @@ export function ContractReplay({
 
       {/* Actions */}
       <div className="flex flex-col gap-3 sm:flex-row">
-        <Button onClick={onNewBacktest}>New Backtest</Button>
+        <Button variant="outline" onClick={onNewBacktest}>New Replay</Button>
       </div>
     </div>
   );

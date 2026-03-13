@@ -52,9 +52,11 @@ interface MomentPickerProps {
   is0DTE?: boolean;
   /** Allow parent to override the entry time (e.g. snap on 0DTE switch) */
   entryTimeOverride?: string;
+  /** Pre-fill values from a previous replay (e.g. from localStorage) */
+  prefill?: { ticker: string; date: string; entryTime: string; optionType: string };
 }
 
-export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRight, onRightChange, is0DTE, entryTimeOverride }: MomentPickerProps) {
+export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRight, onRightChange, is0DTE, entryTimeOverride, prefill }: MomentPickerProps) {
   // Compute tradingDays first so we can derive the default date from it,
   // ensuring they always agree (avoids SSR/client timezone mismatch).
   const tradingDays = useMemo(() => getRecentTradingDays(42), []); // ~60 calendar days of weekdays
@@ -99,6 +101,17 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
   useEffect(() => {
     setRecentTickers(getRecentTickers());
   }, []);
+
+  // Apply prefill values (from "New Replay" localStorage restore)
+  useEffect(() => {
+    if (!prefill) return;
+    if (prefill.ticker && TICKER_SET.has(prefill.ticker)) {
+      setTicker(prefill.ticker);
+      setQuery(prefill.ticker);
+    }
+    if (prefill.date) setDate(prefill.date);
+    if (prefill.entryTime) setEntryTime(prefill.entryTime);
+  }, [prefill]);
 
   // Filter tickers based on query
   const filteredTickers = useMemo(() => {
@@ -405,7 +418,7 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
           disabled={!canSubmit}
           className="h-11 shrink-0 sm:w-auto"
         >
-          {loading ? "Loading..." : "Load Chain"}
+          {loading ? "Loading..." : "Replay Options"}
         </Button>
       </div>
     </div>

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MomentPicker } from "@/components/backtesting/moment-picker";
 import { ChainSnapshot } from "@/components/backtesting/chain-snapshot";
@@ -31,8 +31,31 @@ import {
   fetchInsights,
 } from "@/lib/engine/fetch-chain";
 import { hasDailyOptions } from "@/lib/pricing/config/dailyOptions";
+import { to12Hour, formatDateDisplay } from "@/lib/engine/dates";
 
 type Step = "moment" | "chain" | "replay";
+
+// ─── localStorage persistence for last replay params ────────────────
+const LS_KEY = "or_last_replay";
+
+interface LastReplayParams {
+  ticker: string;
+  date: string;
+  entryTime: string;
+  optionType: "call" | "put";
+}
+
+function saveLastReplay(params: LastReplayParams) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(params)); } catch {}
+}
+
+function loadLastReplay(): LastReplayParams | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
 
 /** Cached day data for multi-day navigation */
 interface DayCache {
@@ -82,6 +105,8 @@ export default function BacktestingPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
+  /** Pre-fill params passed to MomentPicker on "New Replay" */
+  const [prefill, setPrefill] = useState<LastReplayParams | null>(null);
 
   const { checkAndIncrement, isLimitReached, limitReason } = useGate();
 
@@ -289,6 +314,14 @@ export default function BacktestingPage() {
         setReplayResult(result);
         setError(null);
         setStep("replay");
+
+        // Persist last replay for "New Replay" pre-fill
+        saveLastReplay({
+          ticker: freshTicker,
+          date: freshDate,
+          entryTime: p.entryTime!,
+          optionType: freshRight,
+        });
 
         // Cache entry day data with full 6-part key
         const freshExpiryMs = p.expiryMs!;
@@ -760,6 +793,9 @@ export default function BacktestingPage() {
     // Invalidate pending fetches so they don't write stale state
     mainFetchId.current++;
     dayFetchId.current++;
+    // Pre-fill from localStorage for convenience
+    const last = loadLastReplay();
+    setPrefill(last);
     setStep("moment");
     setChainData(null);
     setReplayResult(null);
@@ -782,6 +818,7 @@ export default function BacktestingPage() {
     setExitPL(null);
     dayCacheRef.current.clear();
     underlyingCacheRef.current.clear();
+    if (last?.optionType) setSelectedRight(last.optionType as Right);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -815,18 +852,42 @@ export default function BacktestingPage() {
             </p>
           </div>
 
-          {/* 3-step vertical flow */}
+          {/* Two-phase UI flow */}
           <div className="space-y-5">
-            {/* Step 1 — always visible */}
-            <MomentPicker
-              onLoadChain={handleLoadChain}
-              onParamChange={lastPricing ? handleParamChange : undefined}
-              loading={isInitialLoading}
-              selectedRight={selectedRight}
-              onRightChange={handleToggleRight}
-              is0DTE={is0DTE}
-              entryTimeOverride={entryTimeOverride}
-            />
+            {/* Phase 1 — Setup form (hidden during replay) */}
+            {step !== "replay" && (
+              <MomentPicker
+                onLoadChain={handleLoadChain}
+                onParamChange={lastPricing ? handleParamChange : undefined}
+                loading={isInitialLoading}
+                selectedRight={selectedRight}
+                onRightChange={handleToggleRight}
+                is0DTE={is0DTE}
+                entryTimeOverride={entryTimeOverride}
+                prefill={prefill ?? undefined}
+              />
+            )}
+
+            {/* Phase 2 — Compact locked bar (shown during replay) */}
+            {step === "replay" && moment && (
+              <div className="flex items-center justify-between rounded-[14px] border border-border bg-surface px-5 py-3">
+                <div className="flex items-center gap-2 text-[14px] text-text-primary">
+                  <span className="font-semibold">{moment.ticker}</span>
+                  <span className="text-text-muted">&middot;</span>
+                  <span>{formatDateDisplay(moment.date)}</span>
+                  <span className="text-text-muted">&middot;</span>
+                  <span>{to12Hour(moment.entryTime)} ET</span>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={handleNewBacktest}
+                  className="gap-1.5 border-accent/30 text-accent hover:bg-accent/10 hover:text-accent"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  New Replay
+                </Button>
+              </div>
+            )}
 
             {/* Step 2 — chain snapshot (only when user picks another contract) */}
             <PaywallBlur isBlurred={isLimitReached} onUnlock={() => setShowPaywall(true)}>
