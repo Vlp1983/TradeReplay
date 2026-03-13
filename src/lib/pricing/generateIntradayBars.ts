@@ -81,6 +81,58 @@ function buildThetaWeights(n: number, dteBucket: string): number[] {
   return weights;
 }
 
+// ─── Synthetic underlying bar generator ─────────────────────────────
+
+/**
+ * When Polygon returns < 2 bars, generate 78 synthetic 5-min underlying
+ * bars using spot as anchor with seeded Brownian-style walk.
+ * This ensures the chart always has meaningful movement.
+ */
+function generateSyntheticUnderlyingBars(
+  spot: number,
+  iv: number,
+  replayDate: Date,
+  rng: () => number
+): Bar[] {
+  const n = 78; // full trading day of 5-min bars
+  const bars: Bar[] = [];
+  // 9:30 AM ET = 14:30 UTC
+  const marketOpenMs = new Date(replayDate).setUTCHours(14, 30, 0, 0);
+
+  // Per-bar volatility: annualized IV → 5-min vol
+  // σ_bar = IV * sqrt(5 / (252 * 390))
+  const barVol = iv * Math.sqrt(5 / (252 * 390));
+
+  let currentSpot = spot;
+
+  for (let i = 0; i < n; i++) {
+    const timestamp = marketOpenMs + i * 5 * 60 * 1000;
+    const barOpen = currentSpot;
+
+    // Brownian increment with slight mean-reversion toward spot
+    const noise = seededNoise(rng);
+    const meanReversion = -0.05 * (currentSpot - spot) / spot;
+    const move = currentSpot * (barVol * noise + meanReversion * barVol);
+
+    const barClose = Math.max(barOpen * 0.95, barOpen + move);
+    const barHigh = Math.max(barOpen, barClose) * (1 + Math.abs(seededNoise(rng)) * barVol * 0.5);
+    const barLow = Math.min(barOpen, barClose) * (1 - Math.abs(seededNoise(rng)) * barVol * 0.5);
+
+    bars.push({
+      timestamp,
+      open: barOpen,
+      high: barHigh,
+      low: Math.max(0.01, barLow),
+      close: barClose,
+      volume: 1000000,
+    });
+
+    currentSpot = barClose;
+  }
+
+  return bars;
+}
+
 // ─── Main bar generator ──────────────────────────────────────────────
 
 export function generateIntradayBars(params: {
@@ -96,7 +148,6 @@ export function generateIntradayBars(params: {
   tickerConfig: TickerConfig;
 }): OptionBar[] {
   const {
-    intradayBars,
     strike,
     expiry,
     replayDate,
@@ -107,31 +158,27 @@ export function generateIntradayBars(params: {
     dteBucket,
     tickerConfig,
   } = params;
+  let { intradayBars } = params;
 
   console.log(
     `[generateIntradayBars] optionType=${optionType} spot=${spot} strike=${strike} dte=${computeDTE(replayDate, expiry)} iv=${iv.toFixed(4)} dteBucket=${dteBucket} ` +
     `underlyingBars=${intradayBars.length} firstBar=${intradayBars[0]?.open ?? "N/A"} lastBar=${intradayBars[intradayBars.length - 1]?.close ?? "N/A"}`
   );
 
-  if (intradayBars.length === 0) {
-    // No bars: return flat line at theoretical price
-    const theoretical = priceOption(spot, strike, computeDTE(replayDate, expiry), iv, riskFreeRate, optionType, dteBucket);
-    console.warn("[generateIntradayBars] No intraday bars, returning synthetic flat line");
-    return [{
-      timestamp: replayDate.getTime(),
-      open: theoretical,
-      high: theoretical,
-      low: theoretical,
-      close: theoretical,
-    }];
+  // Seed deterministic RNG (do this BEFORE synthetic bar generation so seed is consistent)
+  const seedStr = `${tickerConfig.ticker}${replayDate.toISOString()}${strike}${expiry.toISOString()}`;
+  const rng = createLCG(simpleHash(seedStr));
+
+  // If fewer than 2 bars, generate synthetic underlying bars for a full trading day
+  if (intradayBars.length < 2) {
+    console.warn(
+      `[generateIntradayBars] Only ${intradayBars.length} underlying bars — generating synthetic 78-bar underlying array`
+    );
+    intradayBars = generateSyntheticUnderlyingBars(spot, iv, replayDate, rng);
   }
 
   const n = intradayBars.length;
   const totalBarsInDay = 78; // 5-min bars in a trading day
-
-  // Seed deterministic RNG
-  const seedStr = `${tickerConfig.ticker}${replayDate.toISOString()}${strike}${expiry.toISOString()}`;
-  const rng = createLCG(simpleHash(seedStr));
 
   // Build theta decay weights
   const thetaWeights = buildThetaWeights(n, dteBucket);
@@ -153,18 +200,21 @@ export function generateIntradayBars(params: {
 
   const optionBars: OptionBar[] = [];
   let currentPrice = openPrice;
+  let zeroDeltaCount = 0;
 
   for (let i = 0; i < n; i++) {
     const bar = intradayBars[i];
-    const barSpot = bar.close;
 
     // Compute remaining DTE fraction: decrease through the day
     const dayFraction = Math.min(i / Math.max(n - 1, 1), 1);
     const remainingDTE = Math.max(dte - dayFraction / 365, 1e-8);
 
+    // Get the current underlying spot for Greeks computation
+    const currentSpot = i === 0 ? spot : intradayBars[Math.max(0, i - 1)].close;
+
     // Get Greeks at current state
     const greeks = computeGreeks(
-      i === 0 ? spot : intradayBars[Math.max(0, i - 1)].close,
+      currentSpot,
       strike,
       remainingDTE,
       iv,
@@ -173,9 +223,11 @@ export function generateIntradayBars(params: {
     );
 
     if (i === 0) {
-      // First bar: open at theoretical price
+      // First bar: use theoretical price, but allow movement within this bar
+      const underlyingDollarMove = bar.close - bar.open;
+      const firstBarDelta = greeks.delta * underlyingDollarMove;
       const barOpen = openPrice;
-      const barClose = openPrice;
+      const barClose = Math.max(0.01, openPrice + firstBarDelta);
       optionBars.push({
         timestamp: bar.timestamp,
         open: +barOpen.toFixed(2),
@@ -188,19 +240,23 @@ export function generateIntradayBars(params: {
     }
 
     const barOpen = currentPrice;
+
+    // Underlying dollar move for this bar (NOT percentage — delta is dOption/dSpot)
+    const underlyingDollarMove = bar.close - bar.open;
     const underlyingReturn =
-      bar.open > 0 ? (bar.close - bar.open) / bar.open : 0;
+      bar.open > 0 ? underlyingDollarMove / bar.open : 0;
 
     // ── Factor 1: Delta component ──
-    const deltaMove = greeks.delta * underlyingReturn * currentPrice;
+    // Delta = dOption/dSpot, so option dollar change = delta * spot dollar change
+    const deltaMove = greeks.delta * underlyingDollarMove;
+
+    if (deltaMove === 0 && i <= 5) {
+      zeroDeltaCount++;
+    }
 
     // ── Factor 2: Gamma component ──
-    // For 0DTE near ATM, gamma becomes dominant — intentionally large
-    const spotMove = underlyingReturn * (i === 0 ? spot : intradayBars[i - 1].close);
-    const gammaMove =
-      currentPrice > 0
-        ? (0.5 * greeks.gamma * spotMove * spotMove) / Math.max(currentPrice, 0.01)
-        : 0;
+    // Gamma = d²Option/dSpot², so contribution = 0.5 * gamma * (spotMove)²
+    const gammaMove = 0.5 * greeks.gamma * underlyingDollarMove * underlyingDollarMove;
 
     // ── Factor 3: Theta decay ──
     // theta is per calendar day, thetaWeights distribute across intraday
@@ -239,6 +295,14 @@ export function generateIntradayBars(params: {
     });
 
     currentPrice = barClose;
+  }
+
+  // Warn if first 5 bars all had zero delta movement
+  if (zeroDeltaCount >= 5) {
+    console.warn(
+      `[generateIntradayBars] WARNING: First ${zeroDeltaCount} bars all had deltaMove === 0. ` +
+      `Check that underlying bars have actual price movement.`
+    );
   }
 
   console.log(`[generateIntradayBars] Output: ${optionBars.length} bars, first open=${optionBars[0]?.open}, last close=${optionBars[optionBars.length - 1]?.close}`);

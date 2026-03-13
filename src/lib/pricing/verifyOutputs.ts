@@ -19,27 +19,30 @@ export function verifyOutputs(
   if (bars.length === 0) return bars;
 
   const corrected = bars.map((bar, i) => {
-    const underlying = intradayBars[i];
+    const underlying = i < intradayBars.length ? intradayBars[i] : undefined;
     const underlyingClose = underlying?.close ?? 0;
 
     let { open, high, low, close } = bar;
 
-    // 1. Intrinsic floor
-    const intrinsic =
-      optionType === "call"
-        ? Math.max(0, underlyingClose - strike)
-        : Math.max(0, strike - underlyingClose);
+    // Only apply intrinsic/ITM checks when we have real underlying data
+    if (underlyingClose > 0) {
+      // 1. Intrinsic floor
+      const intrinsic =
+        optionType === "call"
+          ? Math.max(0, underlyingClose - strike)
+          : Math.max(0, strike - underlyingClose);
 
-    close = Math.max(close, intrinsic, 0.01);
+      close = Math.max(close, intrinsic, 0.01);
 
-    // 2. Deep ITM cap
-    if (optionType === "call" && underlyingClose > strike) {
-      const maxPrice = 0.99 * (underlyingClose - strike) + strike * 0.1;
-      close = Math.min(close, maxPrice);
-    }
-    if (optionType === "put" && strike > underlyingClose) {
-      const maxPrice = 0.99 * (strike - underlyingClose) + underlyingClose * 0.1;
-      close = Math.min(close, maxPrice);
+      // 2. Deep ITM cap
+      if (optionType === "call" && underlyingClose > strike) {
+        const maxPrice = 0.99 * (underlyingClose - strike) + strike * 0.1;
+        close = Math.min(close, maxPrice);
+      }
+      if (optionType === "put" && strike > underlyingClose) {
+        const maxPrice = 0.99 * (strike - underlyingClose) + underlyingClose * 0.1;
+        close = Math.min(close, maxPrice);
+      }
     }
 
     // Enforce $0.01 floor on all OHLC
