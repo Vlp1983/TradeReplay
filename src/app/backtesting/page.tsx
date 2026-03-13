@@ -39,6 +39,19 @@ interface DayCache {
   dte: number;
 }
 
+/**
+ * Build a cache key that includes ALL pricing params.
+ * Prevents stale cache hits when switching call/put or changing expiry.
+ */
+function dayCacheKey(
+  viewedDate: string,
+  optionType: string,
+  strike: number,
+  expiryMs: number
+): string {
+  return `${viewedDate}:${optionType}:${strike}:${expiryMs}`;
+}
+
 export default function BacktestingPage() {
   // ─── Core pricing params (changes trigger re-pricing via useEffect) ──
   const [moment, setMoment] = useState<MomentSelection | null>(null);
@@ -97,11 +110,10 @@ export default function BacktestingPage() {
   useEffect(() => {
     if (!ticker || !date || !entryTime || expiryMs == null) return;
 
-    const id = ++fetchIdRef.current;
+    const currentFetchId = ++fetchIdRef.current;
     const expiry = new Date(expiryMs);
 
-    // Clear error immediately (before debounce delay)
-    // so the error banner doesn't linger from a previous failed fetch
+    // Clear error and stale state immediately (before debounce delay)
     setError(null);
 
     // Reset multi-day state on new pricing params
@@ -127,7 +139,7 @@ export default function BacktestingPage() {
             expiry,
             optionType: selectedRight,
           });
-          if (id !== fetchIdRef.current) return; // stale
+          if (currentFetchId !== fetchIdRef.current) return; // stale
           strike = probe.strikeChain.atmStrike;
           console.log("[pricing-effect] ATM resolved:", strike);
         }
@@ -146,7 +158,7 @@ export default function BacktestingPage() {
           expiry,
           optionType: selectedRight,
         });
-        if (id !== fetchIdRef.current) return; // stale
+        if (currentFetchId !== fetchIdRef.current) return; // stale
 
         // ─── Process results ────────────────────────────────────────
         setLastPricing(pricing);
@@ -194,8 +206,9 @@ export default function BacktestingPage() {
         setReplayResult(result);
         setStep("replay");
 
-        // Cache entry day data
-        dayCacheRef.current.set(date, {
+        // Cache entry day data (with full cache key)
+        const key = dayCacheKey(date, selectedRight, strike, expiryMs);
+        dayCacheRef.current.set(key, {
           points: result.sameDayPoints,
           dte: result.metrics.dteAtEntry,
         });
@@ -233,7 +246,7 @@ export default function BacktestingPage() {
           underlyingLow: prices.length > 0 ? Math.min(...prices) : 0,
         })
           .then((insightsResult) => {
-            if (id !== fetchIdRef.current) return;
+            if (currentFetchId !== fetchIdRef.current) return;
             if (insightsResult.insights.length > 0) {
               setReplayResult((prev) =>
                 prev
@@ -248,11 +261,11 @@ export default function BacktestingPage() {
           })
           .catch(() => {});
       } catch (err) {
-        if (id !== fetchIdRef.current) return;
+        if (currentFetchId !== fetchIdRef.current) return; // stale
         console.error("[pricing-effect] Error:", err);
         setError("Failed to load pricing data. Please try again.");
       } finally {
-        if (id === fetchIdRef.current) {
+        if (currentFetchId === fetchIdRef.current) {
           setLoading(false);
         }
       }
@@ -274,16 +287,20 @@ export default function BacktestingPage() {
         return;
       }
 
+      // Use the resolved strike from the result (NOT selectedStrike which may be 0)
+      const resolvedStrike = replayResult?.contract.strike;
+      if (!ticker || !currentExpiry || !resolvedStrike) return;
+
+      // Build cache key with ALL pricing params
+      const key = dayCacheKey(newDate, selectedRight, resolvedStrike, currentExpiry.getTime());
+
       // Check cache
-      const cached = dayCacheRef.current.get(newDate);
+      const cached = dayCacheRef.current.get(key);
       if (cached) {
         setViewedDayPoints(cached.points);
         setViewedDayDTE(cached.dte);
-        // Approximate theta decay: entry premium + theta * days elapsed
         if (replayResult) {
-          const daysFromEntry = cached.dte != null
-            ? replayResult.metrics.dteAtEntry - cached.dte
-            : 0;
+          const daysFromEntry = replayResult.metrics.dteAtEntry - cached.dte;
           const thetaPrice = replayResult.metrics.entryPremium +
             replayResult.metrics.thetaAtEntry * daysFromEntry;
           setThetaDecayPrice(Math.max(0.01, thetaPrice));
@@ -300,27 +317,22 @@ export default function BacktestingPage() {
       }
 
       // Fetch pricing for the new day
-      if (!ticker || !currentExpiry || selectedStrike <= 0) return;
-
-      const dayId = ++dayFetchIdRef.current;
+      const currentDayFetchId = ++dayFetchIdRef.current;
       setViewedDayLoading(true);
 
       try {
         const pricing = await fetchPricing({
           ticker,
           replayDate: newDate,
-          strike: selectedStrike,
+          strike: resolvedStrike,
           expiry: currentExpiry,
           optionType: selectedRight,
         });
-        if (dayId !== dayFetchIdRef.current) return; // stale
+        if (currentDayFetchId !== dayFetchIdRef.current) return; // stale
 
         // Convert bars to points using the ORIGINAL entry premium
         const entryPremium = replayResult?.metrics.entryPremium ?? 1.0;
         const points = barsToTimePoints(pricing.bars, entryPremium);
-
-        // Force first point to show opening gap from entry
-        // (no zeroing — the opening price difference from entry IS the overnight move)
 
         // Compute DTE for this day
         const msPerDay = 86400000;
@@ -329,8 +341,10 @@ export default function BacktestingPage() {
           (currentExpiry.getTime() - dayDate.getTime()) / msPerDay
         ));
 
-        // Cache
-        dayCacheRef.current.set(newDate, { points, dte });
+        // Cache with full key
+        dayCacheRef.current.set(key, { points, dte });
+
+        if (currentDayFetchId !== dayFetchIdRef.current) return; // stale
         setViewedDayPoints(points);
         setViewedDayDTE(dte);
 
@@ -342,16 +356,16 @@ export default function BacktestingPage() {
           setThetaDecayPrice(Math.max(0.01, thetaPrice));
         }
       } catch (err) {
-        if (dayId !== dayFetchIdRef.current) return;
+        if (currentDayFetchId !== dayFetchIdRef.current) return; // stale
         console.error("[day-fetch] Error:", err);
         setViewedDayPoints([]);
       } finally {
-        if (dayId === dayFetchIdRef.current) {
+        if (currentDayFetchId === dayFetchIdRef.current) {
           setViewedDayLoading(false);
         }
       }
     },
-    [date, ticker, currentExpiry, selectedStrike, selectedRight, replayResult]
+    [date, ticker, currentExpiry, selectedRight, replayResult]
   );
 
   // ─── Exit time handler (placeholder — stores for future deep dive) ─

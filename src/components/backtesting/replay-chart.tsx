@@ -105,37 +105,47 @@ export function ReplayChart({
   const dataKey = view === "pl" ? "pl_dollar" : "price";
 
   // Reference value: breakeven at $0 for P/L, entry premium for price view
+  // Coloring rule: above ref = GREEN (profit), below ref = RED (loss)
+  // This is purely option price vs entry — identical logic for calls and puts
   const refValue = view === "pl" ? 0 : entryPremium;
 
-  // Y-axis domain — centered around the reference value so breakeven/entry
-  // line appears roughly in the middle of the chart
-  const { yMin, yMax } = useMemo(() => {
-    if (!points.length) return { yMin: 0, yMax: 0 };
+  // Y-axis domain and gradient offset.
+  //
+  // The gradient offset MUST be computed from the data range (including refValue)
+  // because SVG linearGradient with gradientUnits="objectBoundingBox" (default)
+  // maps to the element's bounding box — which corresponds to the data extent,
+  // NOT the Y axis domain.
+  const { yMin, yMax, gradientOffset } = useMemo(() => {
+    if (!points.length) return { yMin: 0, yMax: 0, gradientOffset: 0.5 };
     const values = points.map((p) => p[dataKey] as number);
-    const dataMin = Math.min(...values);
-    const dataMax = Math.max(...values);
-    // Center the axis around the reference value
-    const maxDist = Math.max(
-      Math.abs(dataMax - refValue),
-      Math.abs(dataMin - refValue),
-      1 // minimum span
-    );
-    const pad = maxDist * 0.15;
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+
+    // Include refValue in the range so the reference line is always visible
+    const dataMin = Math.min(rawMin, refValue);
+    const dataMax = Math.max(rawMax, refValue);
+
+    const span = dataMax - dataMin || 1;
+    const pad = span * 0.1;
+
+    // Gradient offset: position of refValue within data range
+    // 0 = top of chart (dataMax), 1 = bottom (dataMin)
+    // GREEN above this point, RED below
+    let offset: number;
+    if (dataMax <= refValue) {
+      offset = 0; // all data at or below ref → entire chart red
+    } else if (dataMin >= refValue) {
+      offset = 1; // all data at or above ref → entire chart green
+    } else {
+      offset = (dataMax - refValue) / span;
+    }
+
     return {
-      yMin: Math.floor(refValue - maxDist - pad),
-      yMax: Math.ceil(refValue + maxDist + pad),
+      yMin: dataMin - pad,
+      yMax: dataMax + pad,
+      gradientOffset: Math.max(0, Math.min(1, offset)),
     };
   }, [points, dataKey, refValue]);
-
-  // Compute gradient position for green/red coloring.
-  // The gradient runs top (y=0) → bottom (y=1) in SVG space.
-  // refValue maps to a certain position in [yMin, yMax].
-  const refPosition = useMemo(() => {
-    const range = yMax - yMin;
-    if (range === 0) return 0.5;
-    // In SVG, top is 0, bottom is 1. yMax is at top, yMin is at bottom.
-    return Math.max(0, Math.min(1, (yMax - refValue) / range));
-  }, [yMin, yMax, refValue]);
 
   return (
     <div className="rounded-lg border border-border bg-bg p-4">
@@ -192,18 +202,18 @@ export function ReplayChart({
           margin={{ top: 8, right: 8, bottom: 4, left: 8 }}
         >
           <defs>
-            {/* Green/red fill gradient — green above ref, red below */}
+            {/* Green/red fill gradient — green above entry, red below */}
             <linearGradient id="chartFillGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#22C55E" stopOpacity={0.18} />
-              <stop offset={`${refPosition * 100}%`} stopColor="#22C55E" stopOpacity={0.08} />
-              <stop offset={`${refPosition * 100}%`} stopColor="#EF4444" stopOpacity={0.08} />
+              <stop offset="0%" stopColor="#22C55E" stopOpacity={0.2} />
+              <stop offset={`${gradientOffset * 100}%`} stopColor="#22C55E" stopOpacity={0.05} />
+              <stop offset={`${gradientOffset * 100}%`} stopColor="#EF4444" stopOpacity={0.05} />
               <stop offset="100%" stopColor="#EF4444" stopOpacity={0} />
             </linearGradient>
             {/* Green/red stroke gradient */}
             <linearGradient id="chartLineGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#22C55E" />
-              <stop offset={`${refPosition * 100}%`} stopColor="#22C55E" />
-              <stop offset={`${refPosition * 100}%`} stopColor="#EF4444" />
+              <stop offset={`${gradientOffset * 100}%`} stopColor="#22C55E" />
+              <stop offset={`${gradientOffset * 100}%`} stopColor="#EF4444" />
               <stop offset="100%" stopColor="#EF4444" />
             </linearGradient>
           </defs>
@@ -225,9 +235,7 @@ export function ReplayChart({
             axisLine={false}
             tickLine={false}
             domain={[yMin, yMax]}
-            tickFormatter={(val: number) =>
-              view === "pl" ? `$${val}` : `$${val}`
-            }
+            tickFormatter={(val: number) => `$${val}`}
             width={56}
           />
           <Tooltip

@@ -221,16 +221,6 @@ export function ContractReplay({
           </div>
         )}
 
-        <p className="mt-2.5 text-[12px] text-text-muted">
-          Showing the at-the-money (ATM) {isCall ? "call" : "put"} by default.
-          Want to try an out-of-the-money (OTM) strike?{" "}
-          <button
-            onClick={onPickAnother}
-            className="font-medium text-accent underline-offset-2 hover:underline"
-          >
-            Browse all strikes
-          </button>
-        </p>
       </div>
 
       {/* Day navigator (multi-day trades only) */}

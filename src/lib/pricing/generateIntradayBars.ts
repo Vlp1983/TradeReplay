@@ -166,7 +166,11 @@ export function generateIntradayBars(params: {
   );
 
   // Seed deterministic RNG (do this BEFORE synthetic bar generation so seed is consistent)
-  const seedStr = `${tickerConfig.ticker}${replayDate.toISOString()}${strike}${expiry.toISOString()}`;
+  // Use date-only strings (not full ISO) + optionType so the seed is stable across calls
+  // and different for calls vs puts
+  const dateOnly = replayDate.toISOString().split('T')[0];
+  const expiryOnly = expiry.toISOString().split('T')[0];
+  const seedStr = `${tickerConfig.ticker}${dateOnly}${strike}${expiryOnly}${optionType}`;
   const rng = createLCG(simpleHash(seedStr));
 
   // If fewer than 2 bars, generate synthetic underlying bars for a full trading day

@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid date" }, { status: 400 });
     }
 
+    console.log("[/api/pricing] optionType received:", optionType);
     console.log("[/api/pricing] Params:", { ticker, replayDate: parsedReplayDate.toISOString(), strike: strikeNum, expiry: parsedExpiry.toISOString(), optionType });
 
     const result = await generateOptionPricing({
