@@ -30,6 +30,7 @@ import {
   getTradingDaysBetween,
   fetchInsights,
 } from "@/lib/engine/fetch-chain";
+import { hasDailyOptions } from "@/lib/pricing/config/dailyOptions";
 
 type Step = "moment" | "chain" | "replay";
 
@@ -656,6 +657,9 @@ export default function BacktestingPage() {
         setViewedDayPoints(null);
         setViewedDayDTE(undefined);
         setThetaDecayPrice(undefined);
+        // Reset strike to ATM for new ticker/date
+        setSelectedStrike(0);
+        setAvailableExpiries([]);
       }
 
       setMoment(selection);

@@ -358,7 +358,7 @@ function detectKeyMoments(
   moments.push({
     time: points[0].label,
     label: "Entry",
-    reason: `Entered at $${entryPremium.toFixed(2)} per share.`,
+    reason: `Entered at $${(entryPremium * 100).toFixed(2)} per contract.`,
     type: "trade",
   });
 

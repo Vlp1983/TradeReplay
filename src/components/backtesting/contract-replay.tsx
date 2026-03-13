@@ -3,7 +3,8 @@
 import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { List } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { List, Lightbulb, TrendingUp, TrendingDown, Target, Users } from "lucide-react";
 import { SummaryCards } from "./summary-cards";
 import { ReplayChart } from "./replay-chart";
 import { UnderlyingChart } from "./underlying-chart";
@@ -13,7 +14,7 @@ import { InsightsPanel } from "./insights-panel";
 import { DeepDivePanel } from "./deep-dive-panel";
 import { ExitTimePicker } from "./exit-time-picker";
 import { DayNavigator } from "./day-navigator";
-import type { ReplayResult, Right, TimePoint } from "@/lib/engine/types";
+import type { ReplayResult, ReplayMetrics, Right, TimePoint } from "@/lib/engine/types";
 import { to12Hour } from "@/lib/engine/dates";
 
 /** Serialized expiry from pricing API (date is ISO string after JSON round-trip) */
@@ -69,6 +70,97 @@ interface ContractReplayProps {
   underlyingLoading?: boolean;
   /** Called to request underlying data for overlay */
   onRequestUnderlying?: () => void;
+}
+
+/** Best Exit Analysis — 2:1 risk/reward analysis */
+function BestExitAnalysis({ metrics, entryPremium }: { metrics: ReplayMetrics; entryPremium: number }) {
+  const riskPerContract = entryPremium * 100; // max risk = premium paid
+  const twoToOneTarget = riskPerContract * 2;
+  const hitTarget = metrics.maxProfit >= twoToOneTarget;
+  const optimalWasGood = metrics.optimalExitPL > 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-border bg-surface/50 px-4 py-3">
+        <p className="text-[13px] font-medium text-text-muted mb-1">2:1 Risk/Reward Target</p>
+        <p className="text-[13px] text-text-secondary">
+          Premium paid: <span className="font-semibold text-text-primary">${riskPerContract.toFixed(2)}</span> per contract.
+          A 2:1 target = <span className="font-semibold text-text-primary">${twoToOneTarget.toFixed(2)}</span> profit.
+        </p>
+        <p className={`mt-1 text-[13px] font-semibold ${hitTarget ? "text-green-400" : "text-amber-400"}`}>
+          {hitTarget
+            ? `Target was hit — max profit reached $${metrics.maxProfit.toFixed(2)} at ${metrics.maxProfitTime}.`
+            : `Target was NOT hit — max profit was $${metrics.maxProfit.toFixed(2)} (${metrics.maxProfitPct.toFixed(0)}%) at ${metrics.maxProfitTime}.`}
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-surface/50 px-4 py-3">
+        <p className="text-[13px] font-medium text-text-muted mb-1">Optimal Exit</p>
+        <p className="text-[13px] text-text-secondary">
+          {optimalWasGood ? (
+            <>
+              Best exit was at <span className="font-semibold text-text-primary">{metrics.optimalExitTime}</span> with{" "}
+              <span className="font-semibold text-green-400">+${metrics.optimalExitPL.toFixed(2)}</span> ({metrics.optimalExitReason}).
+            </>
+          ) : (
+            <>
+              No profitable exit window — the option lost value from entry.
+              Max drawdown was <span className="font-semibold text-red-400">${Math.abs(metrics.maxDrawdown).toFixed(2)}</span> at {metrics.maxDrawdownTime}.
+            </>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** What Most Traders Did — behavioral analysis */
+function TraderBehaviorAnalysis({ metrics }: { metrics: ReplayMetrics }) {
+  const profitable = metrics.exitAtClosePL >= 0;
+  const bigWin = metrics.maxProfitPct >= 50;
+  const bigLoss = metrics.maxDrawdownPct <= -30;
+  const earlyExit = metrics.optimalExitPLPct > metrics.exitAtClosePLPct + 10;
+
+  // Determine likely trader behavior
+  let behavior: string;
+  let outcome: string;
+  let isWin: boolean;
+
+  if (profitable && bigWin) {
+    behavior = "Most traders would have taken profit early, likely around +20-30%, missing the full move.";
+    outcome = `Holding to close returned +${metrics.exitAtClosePLPct.toFixed(0)}% — patience was rewarded.`;
+    isWin = true;
+  } else if (profitable && !bigWin) {
+    behavior = "Most traders would have held through the session looking for a bigger move.";
+    outcome = `The trade ended with a modest +${metrics.exitAtClosePLPct.toFixed(0)}% gain — a realistic win.`;
+    isWin = true;
+  } else if (!profitable && bigLoss) {
+    behavior = "Most traders would have panic-sold during the sharp drawdown, locking in a loss near the bottom.";
+    outcome = `Max drawdown hit ${metrics.maxDrawdownPct.toFixed(0)}% at ${metrics.maxDrawdownTime} — most would have exited there.`;
+    isWin = false;
+  } else if (!profitable && earlyExit) {
+    behavior = "Most traders would have missed the optimal exit window and held hoping for a recovery.";
+    outcome = `The optimal exit was at ${metrics.optimalExitTime} (${metrics.optimalExitReason}), but most would have held to a loss.`;
+    isWin = false;
+  } else {
+    behavior = "Most traders would have held through the session, hoping for a turnaround that didn't come.";
+    outcome = `The trade closed at ${metrics.exitAtClosePLPct.toFixed(0)}% — a common outcome for undisciplined exits.`;
+    isWin = metrics.exitAtClosePL >= 0;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className={`rounded-lg border px-4 py-3 ${isWin ? "border-green-500/20 bg-green-500/5" : "border-red-500/20 bg-red-500/5"}`}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${isWin ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}>
+            Realistic {isWin ? "Win" : "Loss"}
+          </span>
+        </div>
+        <p className="text-[13px] leading-relaxed text-text-secondary">{behavior}</p>
+        <p className="mt-1.5 text-[13px] font-medium text-text-primary">{outcome}</p>
+      </div>
+    </div>
+  );
 }
 
 export function ContractReplay({
@@ -134,6 +226,9 @@ export function ContractReplay({
 
   // Today's date for day navigator
   const today = new Date().toISOString().slice(0, 10);
+
+  // Determine if the contract has expired (backward-looking only)
+  const isExpired = expiryDateStr < today;
 
   // Show DTE in contract info area
   const displayDTE = viewedDayDTE ?? metrics.dteAtEntry;
@@ -325,6 +420,8 @@ export function ContractReplay({
           isMultiDay={isMultiDay}
           entryPremium={metrics.entryPremium}
           thetaDecayPrice={thetaDecayPrice}
+          isEntryDay={!viewedDate || viewedDate === contract.date}
+          entryTime={contract.entryTime}
         />
         {chartLoading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-surface/70 z-10">
@@ -343,6 +440,8 @@ export function ContractReplay({
               ticker={contract.ticker}
               dateLabel={underlyingDateLabel}
               entryTimeLabel={entryTimeLabel}
+              isEntryDay={!viewedDate || viewedDate === contract.date}
+              entryTime={contract.entryTime}
             />
           </div>
         )}
@@ -353,31 +452,84 @@ export function ContractReplay({
         <SummaryCards metrics={metrics} right={selectedRight} exitPL={exitPL} />
       </div>
 
-      {/* 4. Exit time picker */}
-      <div className="mb-5">
-        <ExitTimePicker
-          entryTime={contract.entryTime}
-          entryDate={contract.date}
-          expiryDate={expiryDateStr}
-          onExitChange={onExitChange}
-        />
-      </div>
+      {/* 4. Exit time picker — only shown for expired contracts */}
+      {isExpired && (
+        <div className="mb-5">
+          <ExitTimePicker
+            entryTime={contract.entryTime}
+            entryDate={contract.date}
+            expiryDate={expiryDateStr}
+            onExitChange={onExitChange}
+          />
+        </div>
+      )}
 
-      {/* 5. Key Insights — data-driven observations + AI analysis */}
-      <div className="mb-5">
-        <InsightsPanel
-          insights={result.insights}
-          source={result.insightsSource}
-          ticker={contract.ticker}
-          date={contract.date}
-          chartPoints={chartPoints}
-          metrics={metrics}
-        />
-      </div>
+      {/* 5. Analysis sections — 4 accordion panels */}
+      <div className="mb-6 rounded-lg border border-border bg-bg">
+        <Accordion type="multiple" defaultValue={["key-insights"]}>
+          {/* Key Insights */}
+          <AccordionItem value="key-insights">
+            <AccordionTrigger className="px-5 text-[15px]">
+              <span className="flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-blue-400" />
+                Key Insights
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="px-5">
+              <InsightsPanel
+                insights={result.insights}
+                source={result.insightsSource}
+                ticker={contract.ticker}
+                date={contract.date}
+                chartPoints={chartPoints}
+                metrics={metrics}
+              />
+            </AccordionContent>
+          </AccordionItem>
 
-      {/* 6. Key moments timeline */}
-      <div className="mb-5">
-        <KeyMomentsList moments={keyMoments} />
+          {/* What Went Right/Wrong */}
+          <AccordionItem value="right-wrong">
+            <AccordionTrigger className="px-5 text-[15px]">
+              <span className="flex items-center gap-2">
+                {metrics.exitAtClosePL >= 0 ? (
+                  <TrendingUp className="h-4 w-4 text-green-400" />
+                ) : (
+                  <TrendingDown className="h-4 w-4 text-red-400" />
+                )}
+                What Went {metrics.exitAtClosePL >= 0 ? "Right" : "Wrong"}
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="px-5">
+              <KeyMomentsList moments={keyMoments} />
+            </AccordionContent>
+          </AccordionItem>
+
+          {/* Best Exit Analysis */}
+          <AccordionItem value="best-exit">
+            <AccordionTrigger className="px-5 text-[15px]">
+              <span className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-accent" />
+                Best Exit Analysis
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="px-5">
+              <BestExitAnalysis metrics={metrics} entryPremium={metrics.entryPremium} />
+            </AccordionContent>
+          </AccordionItem>
+
+          {/* What Most Traders Did */}
+          <AccordionItem value="most-traders">
+            <AccordionTrigger className="px-5 text-[15px]">
+              <span className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-purple-400" />
+                What Most Traders Did
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="px-5">
+              <TraderBehaviorAnalysis metrics={metrics} />
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </div>
 
       {/* Deep Dive — strategy-specific AI analysis */}

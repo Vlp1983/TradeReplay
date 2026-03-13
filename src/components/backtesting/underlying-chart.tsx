@@ -26,6 +26,10 @@ interface UnderlyingChartProps {
   dateLabel: string;
   /** Entry time label for the vertical reference line (e.g. "10:00 AM") */
   entryTimeLabel?: string;
+  /** Whether viewing the entry day (affects time range start) */
+  isEntryDay?: boolean;
+  /** Entry time in HH:MM 24h format (ET) — used to set chart start on entry day */
+  entryTime?: string;
 }
 
 interface TooltipPayloadEntry {
@@ -60,16 +64,16 @@ function UnderlyingTooltip({ active, payload, label }: ChartTooltipProps) {
 }
 
 /**
- * Generate full trading day time slots (9:30 AM - 3:55 PM ET, 5-min intervals).
- * Returns labels matching the format used by underlying points.
+ * Generate trading day time slots (5-min intervals).
+ * startHour/startMin control the range start (9:30 default, or entry time on entry day).
+ * Always ends at 3:55 PM ET.
  */
-function generateFullDayLabels(): string[] {
+function generateDayLabels(startHour = 9, startMin = 30): string[] {
   const labels: string[] = [];
-  // 9:30 AM to 3:55 PM = 78 bars
-  for (let h = 9; h <= 15; h++) {
-    const startMin = h === 9 ? 30 : 0;
-    const endMin = h === 15 ? 55 : 55;
-    for (let m = startMin; m <= endMin; m += 5) {
+  for (let h = startHour; h <= 15; h++) {
+    const mStart = h === startHour ? startMin : 0;
+    const mEnd = h === 15 ? 55 : 55;
+    for (let m = mStart; m <= mEnd; m += 5) {
       let h12 = h;
       const suffix = h12 >= 12 ? "PM" : "AM";
       if (h12 === 0) h12 = 12;
@@ -80,17 +84,24 @@ function generateFullDayLabels(): string[] {
   return labels;
 }
 
-export function UnderlyingChart({ points, ticker, dateLabel, entryTimeLabel }: UnderlyingChartProps) {
-  // Build full-day data: fill gaps with null so the chart shows 9:30-3:55
+export function UnderlyingChart({ points, ticker, dateLabel, entryTimeLabel, isEntryDay, entryTime }: UnderlyingChartProps) {
+  // Build data filling gaps. On entry day start from entry time, subsequent days from 9:30.
   const fullDayData = useMemo(() => {
     if (!points.length) return [];
     const labelMap = new Map(points.map((p) => [p.label, p.underlyingPrice]));
-    const allLabels = generateFullDayLabels();
+    let startH = 9, startM = 30;
+    if (isEntryDay && entryTime) {
+      const [eH, eM] = entryTime.split(":").map(Number);
+      // Round down to nearest 5 min
+      startH = eH;
+      startM = eM - (eM % 5);
+    }
+    const allLabels = generateDayLabels(startH, startM);
     return allLabels.map((label) => ({
       label,
       underlyingPrice: labelMap.get(label) ?? null,
     }));
-  }, [points]);
+  }, [points, isEntryDay, entryTime]);
 
   const { yMin, yMax } = useMemo(() => {
     if (!points.length) return { yMin: 0, yMax: 100 };

@@ -346,7 +346,7 @@ export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRigh
         <div className="flex-1">
           <label className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-text-secondary">
             <Calendar className="h-3.5 w-3.5 text-accent" />
-            Trading Date
+            Entry Date
           </label>
           <div className="relative">
             <select

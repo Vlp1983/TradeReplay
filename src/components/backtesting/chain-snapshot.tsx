@@ -11,7 +11,7 @@ import type {
   Right,
   SelectedContract,
 } from "@/lib/engine/types";
-import { ZERO_DTE_TICKERS } from "@/lib/engine/types";
+import { hasDailyOptions } from "@/lib/pricing/config/dailyOptions";
 import { formatDateDisplay, getExpirationLabel, to12Hour } from "@/lib/engine/dates";
 
 interface ChainSnapshotProps {
@@ -56,8 +56,8 @@ export function ChainSnapshot({
   // Determine if this is live data or estimated
   const isLiveData = chain.source === "polygon";
 
-  // Show 0DTE tab only if ticker is in the known 0DTE list
-  const show0DTE = (ZERO_DTE_TICKERS as readonly string[]).includes(chain.ticker);
+  // Show 0DTE tab only if ticker has daily options expirations
+  const show0DTE = hasDailyOptions(chain.ticker);
 
   function handleRowClick(strike: number, right: Right) {
     setSelectedStrike(strike);

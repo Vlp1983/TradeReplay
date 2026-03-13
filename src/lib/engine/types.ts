@@ -13,7 +13,7 @@ export type Confidence = "High" | "Med" | "Low";
 export type ChartView = "pl_pct" | "pl_dollar" | "price";
 export type ChartRange = "same_day" | "to_expiration";
 
-/** Tickers known to have 0DTE (same-day) expirations */
+/** @deprecated Use hasDailyOptions() from dailyOptions.ts instead */
 export const ZERO_DTE_TICKERS = [
   "SPY", "QQQ", "IWM", "AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "SPX", "NDX",
 ] as const;

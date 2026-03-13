@@ -9,14 +9,13 @@ interface SummaryCardsProps {
   exitPL?: { premium: number; dollar: number; pct: number } | null;
 }
 
-function dual(perShare: number): string {
-  return `$${Math.abs(perShare).toFixed(2)} per share / $${Math.abs(perShare * 100).toFixed(2)} per contract (100x)`;
+function fmtContract(perShare: number): string {
+  return `$${Math.abs(perShare * 100).toFixed(2)}`;
 }
 
-function dualPL(perContract: number): string {
-  const perShare = perContract / 100;
+function fmtContractPL(perContract: number): string {
   const sign = perContract >= 0 ? "+" : "-";
-  return `${sign}$${Math.abs(perShare).toFixed(2)} per share / ${sign}$${Math.abs(perContract).toFixed(2)} per contract (100x)`;
+  return `${sign}$${Math.abs(perContract).toFixed(2)}`;
 }
 
 export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
@@ -32,7 +31,7 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
     },
     {
       label: "Entry Premium",
-      value: dual(metrics.entryPremium),
+      value: fmtContract(metrics.entryPremium),
     },
     {
       label: "IV at Entry",
@@ -48,25 +47,25 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
   const secondaryRows: { label: string; value: string; color?: string }[] = [
     {
       label: "Exit Premium",
-      value: dual(metrics.exitPremium),
+      value: fmtContract(metrics.exitPremium),
     },
     {
       label: "Max Gain (if held to expiry)",
-      value: `${dualPL(metrics.maxProfit)} — at ${metrics.maxProfitTime}`,
+      value: `${fmtContractPL(metrics.maxProfit)} — at ${metrics.maxProfitTime}`,
       color: "text-success",
     },
     {
       label: "Max Loss (if held to expiry)",
-      value: `${dualPL(metrics.maxDrawdown)} — at ${metrics.maxDrawdownTime}`,
+      value: `${fmtContractPL(metrics.maxDrawdown)} — at ${metrics.maxDrawdownTime}`,
       color: "text-danger",
     },
     {
       label: "Optimal Exit",
-      value: `${metrics.optimalExitTime} at $${metrics.optimalExitPremium.toFixed(2)} — ${metrics.optimalExitReason}`,
+      value: `${metrics.optimalExitTime} at $${(metrics.optimalExitPremium * 100).toFixed(2)} — ${metrics.optimalExitReason}`,
     },
     {
       label: "Result",
-      value: `${metrics.exitAtClosePL >= 0 ? "Profit" : "Loss"} of ${dualPL(metrics.exitAtClosePL)} (if held to close)`,
+      value: `${metrics.exitAtClosePL >= 0 ? "Profit" : "Loss"} of ${fmtContractPL(metrics.exitAtClosePL)} (if held to close)`,
       color: metrics.exitAtClosePL >= 0 ? "text-success" : "text-danger",
     },
   ];
@@ -89,25 +88,30 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
         ))}
       </ul>
 
-      {/* Greeks grid */}
-      <div className="mt-3 grid grid-cols-4 gap-3 rounded-lg border border-border bg-surface/50 px-4 py-3">
-        <div className="flex flex-col">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Delta</span>
-          <span className="text-[14px] font-semibold text-text-primary">{metrics.deltaAtEntry.toFixed(2)}</span>
+      {/* Greeks grid — hidden when all effectively zero */}
+      {(Math.abs(metrics.deltaAtEntry) >= 0.0001 ||
+        Math.abs(metrics.gammaAtEntry) >= 0.0001 ||
+        Math.abs(metrics.thetaAtEntry) >= 0.0001 ||
+        Math.abs(metrics.vegaAtEntry) >= 0.0001) && (
+        <div className="mt-3 grid grid-cols-4 gap-3 rounded-lg border border-border bg-surface/50 px-4 py-3">
+          <div className="flex flex-col">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Delta</span>
+            <span className="text-[14px] font-semibold text-text-primary">{metrics.deltaAtEntry.toFixed(2)}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Gamma</span>
+            <span className="text-[14px] font-semibold text-text-primary">{metrics.gammaAtEntry.toFixed(3)}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Theta</span>
+            <span className="text-[14px] font-semibold text-text-primary">${(metrics.thetaAtEntry * 100).toFixed(2)}/day</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Vega</span>
+            <span className="text-[14px] font-semibold text-text-primary">{metrics.vegaAtEntry.toFixed(3)}</span>
+          </div>
         </div>
-        <div className="flex flex-col">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Gamma</span>
-          <span className="text-[14px] font-semibold text-text-primary">{metrics.gammaAtEntry.toFixed(3)}</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Theta</span>
-          <span className="text-[14px] font-semibold text-text-primary">${(metrics.thetaAtEntry * 100).toFixed(2)}/day</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Vega</span>
-          <span className="text-[14px] font-semibold text-text-primary">{metrics.vegaAtEntry.toFixed(3)}</span>
-        </div>
-      </div>
+      )}
 
       {/* Your Trade section — shown when exit P&L is available */}
       {exitPL && (
@@ -119,12 +123,12 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
           <ul className="space-y-2">
             <li className="flex flex-wrap gap-x-2 text-[13px]">
               <span className="font-medium text-text-muted">Exit Premium:</span>
-              <span className="font-semibold text-text-primary">{dual(exitPL.premium)}</span>
+              <span className="font-semibold text-text-primary">{fmtContract(exitPL.premium)}</span>
             </li>
             <li className="flex flex-wrap gap-x-2 text-[13px]">
               <span className="font-medium text-text-muted">P&L:</span>
               <span className={`font-semibold ${exitPL.dollar >= 0 ? "text-green-400" : "text-red-400"}`}>
-                {dualPL(exitPL.dollar)}
+                {fmtContractPL(exitPL.dollar)}
               </span>
             </li>
             <li className="flex flex-wrap gap-x-2 text-[13px]">

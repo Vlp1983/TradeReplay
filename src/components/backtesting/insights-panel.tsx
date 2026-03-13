@@ -31,25 +31,24 @@ function computeDataInsights(
 
   // Option movement over the day
   const dayPL = last.pl_dollar;
-  const dayPLPerShare = dayPL / 100;
   const dayPLPct = last.pl_pct;
   if (dayPL >= 0) {
     observations.push(
-      `Your ${ticker} option gained $${dayPLPerShare.toFixed(2)} per share over this session (+${dayPLPct.toFixed(1)}%).`
+      `Your ${ticker} option gained $${dayPL.toFixed(2)} per contract over this session (+${dayPLPct.toFixed(1)}%).`
     );
   } else {
     observations.push(
-      `Your ${ticker} option lost $${Math.abs(dayPLPerShare).toFixed(2)} per share over this session (${dayPLPct.toFixed(1)}%).`
+      `Your ${ticker} option lost $${Math.abs(dayPL).toFixed(2)} per contract over this session (${dayPLPct.toFixed(1)}%).`
     );
   }
 
   // First hour performance (roughly first 12 bars at 5-min intervals)
   const firstHourEnd = Math.min(12, points.length - 1);
-  const firstHourPL = points[firstHourEnd].pl_dollar / 100;
-  if (Math.abs(firstHourPL) > 0.01) {
+  const firstHourPL = points[firstHourEnd].pl_dollar;
+  if (Math.abs(firstHourPL) > 1) {
     const dir = firstHourPL >= 0 ? "gained" : "lost";
     observations.push(
-      `In the first hour, the option ${dir} $${Math.abs(firstHourPL).toFixed(2)} per share.`
+      `In the first hour, the option ${dir} $${Math.abs(firstHourPL).toFixed(2)} per contract.`
     );
   }
 
@@ -59,10 +58,10 @@ function computeDataInsights(
     if (points[i].pl_dollar > points[peakIdx].pl_dollar) peakIdx = i;
   }
   if (points[peakIdx].pl_dollar > 0) {
-    const peakPremium = points[peakIdx].price;
+    const peakPremium = points[peakIdx].price * 100;
     const peakPct = points[peakIdx].pl_pct;
     observations.push(
-      `Peak value was $${peakPremium.toFixed(2)} at ${points[peakIdx].label} — ${peakPct.toFixed(0)}% above entry.`
+      `Peak value was $${peakPremium.toFixed(2)} per contract at ${points[peakIdx].label} — ${peakPct.toFixed(0)}% above entry.`
     );
   }
 

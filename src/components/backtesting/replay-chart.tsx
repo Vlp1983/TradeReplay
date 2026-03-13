@@ -21,6 +21,10 @@ interface ReplayChartProps {
   entryPremium: number;
   /** Optional: theoretical theta-only price for the currently viewed day */
   thetaDecayPrice?: number;
+  /** Whether viewing the entry day (affects time range start) */
+  isEntryDay?: boolean;
+  /** Entry time in HH:MM format (ET) — used to set chart start on entry day */
+  entryTime?: string;
 }
 
 interface TooltipPayloadEntry {
@@ -46,8 +50,6 @@ function ChartTooltip({ active, payload, label, entryPremium }: ChartTooltipProp
   const isProfit = pt.pl_dollar >= 0;
   const plColor = isProfit ? "#22C55E" : "#EF4444";
   const sign = isProfit ? "+" : "";
-  const plPerShare = pt.pl_dollar / 100;
-
   return (
     <div
       className="rounded-lg border px-3 py-2"
@@ -60,13 +62,13 @@ function ChartTooltip({ active, payload, label, entryPremium }: ChartTooltipProp
         {label}
       </p>
       <p className="text-[13px] font-semibold" style={{ color: plColor }}>
-        {sign}${plPerShare.toFixed(2)} per share &middot; {sign}${pt.pl_dollar.toLocaleString()} per contract
+        {sign}${Math.abs(pt.pl_dollar).toLocaleString()}
       </p>
       <p className="text-[11px]" style={{ color: "rgba(246,248,255,0.45)" }}>
         ({sign}{pt.pl_pct.toFixed(1)}%)
       </p>
       <p className="text-[11px]" style={{ color: "rgba(246,248,255,0.45)" }}>
-        Premium: ${pt.price.toFixed(2)} per share &middot; ${(pt.price * 100).toFixed(2)} per contract
+        Premium: ${(pt.price * 100).toFixed(2)}
       </p>
     </div>
   );
@@ -76,6 +78,8 @@ export function ReplayChart({
   sameDayPoints,
   entryPremium,
   thetaDecayPrice,
+  isEntryDay = true,
+  entryTime,
 }: ReplayChartProps) {
   const points = sameDayPoints;
   const refValue = 0; // P/L breakeven
