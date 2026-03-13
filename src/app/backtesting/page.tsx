@@ -74,9 +74,12 @@ export default function BacktestingPage() {
     const id = ++fetchIdRef.current;
     const expiry = new Date(expiryMs);
 
+    // Clear error and stale result immediately (before debounce delay)
+    // so the error banner doesn't linger from a previous failed fetch
+    setError(null);
+
     const timer = setTimeout(async () => {
       setLoading(true);
-      setError(null);
 
       try {
         let strike = selectedStrike;

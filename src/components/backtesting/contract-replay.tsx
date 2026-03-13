@@ -53,7 +53,7 @@ export function ContractReplay({
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
 
-  const contractLabel = `${contract.ticker} ${contract.strike}${contract.right === "call" ? "C" : "P"}`;
+  const contractLabel = `${contract.ticker} ${contract.strike}${selectedRight === "call" ? "C" : "P"}`;
   const isMultiDay = toExpirationPoints.some((p) => p.dayIndex > 0);
 
   // Use selectedRight from parent for immediate visual toggle feedback
@@ -187,7 +187,7 @@ export function ContractReplay({
 
       {/* Summary cards */}
       <div className={`mb-5 ${loading ? "opacity-50" : ""}`}>
-        <SummaryCards metrics={metrics} right={contract.right} />
+        <SummaryCards metrics={metrics} right={selectedRight} />
       </div>
 
       {/* Chart with loading overlay */}
