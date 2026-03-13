@@ -214,8 +214,22 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
                 const val = e.target.value.toUpperCase();
                 setQuery(val);
                 setShowDropdown(true);
-                // Clear selected ticker if user edits away
-                if (val !== ticker) setTicker("");
+                if (val !== ticker) {
+                  // Auto-select if typed value exactly matches a known ticker
+                  if (ALL_TICKERS.includes(val)) {
+                    selectTicker(val);
+                  } else {
+                    setTicker("");
+                  }
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const q = query.trim().toUpperCase();
+                  if (!ticker && q && ALL_TICKERS.includes(q)) {
+                    selectTicker(q);
+                  }
+                }
               }}
               onFocus={() => setShowDropdown(true)}
               className={`h-11 w-full rounded-xl border bg-bg pl-9 pr-9 text-sm outline-none transition-all focus:border-accent focus:ring-1 focus:ring-accent/30 ${
