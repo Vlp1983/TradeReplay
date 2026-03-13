@@ -42,6 +42,8 @@ const ALL_TICKERS = getAllTickers().map((cfg) => cfg.ticker);
 
 interface MomentPickerProps {
   onLoadChain: (selection: MomentSelection) => void;
+  /** Called automatically when params change after initial load (no button click needed) */
+  onParamChange?: (selection: MomentSelection) => void;
   loading?: boolean;
   selectedRight: Right;
   onRightChange: (right: Right) => void;
@@ -51,7 +53,7 @@ interface MomentPickerProps {
   entryTimeOverride?: string;
 }
 
-export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChange, is0DTE, entryTimeOverride }: MomentPickerProps) {
+export function MomentPicker({ onLoadChain, onParamChange, loading, selectedRight, onRightChange, is0DTE, entryTimeOverride }: MomentPickerProps) {
   // Compute tradingDays first so we can derive the default date from it,
   // ensuring they always agree (avoids SSR/client timezone mismatch).
   const tradingDays = useMemo(() => getRecentTradingDays(42), []); // ~60 calendar days of weekdays
@@ -72,6 +74,8 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const hasLoadedRef = useRef(false);
+  const autoChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Hydration safety: if SSR date doesn't match any client-side trading day,
   // snap to the first available trading day.
@@ -138,11 +142,28 @@ export function MomentPicker({ onLoadChain, loading, selectedRight, onRightChang
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // Auto-trigger onParamChange when fields change after initial load
+  useEffect(() => {
+    if (!hasLoadedRef.current || !onParamChange) return;
+    if (!ticker || !date || !entryTime) return;
+
+    // Debounce to avoid rapid re-fetches
+    if (autoChangeTimerRef.current) clearTimeout(autoChangeTimerRef.current);
+    autoChangeTimerRef.current = setTimeout(() => {
+      onParamChange({ ticker, date, entryTime });
+    }, 400);
+
+    return () => {
+      if (autoChangeTimerRef.current) clearTimeout(autoChangeTimerRef.current);
+    };
+  }, [ticker, date, entryTime, onParamChange]);
+
   const canSubmit = !!ticker && !!date && !!entryTime && !loading;
   const isCall = selectedRight === "call";
 
   function handleSubmit() {
     if (!canSubmit) return;
+    hasLoadedRef.current = true;
     onLoadChain({ ticker, date, entryTime });
   }
 

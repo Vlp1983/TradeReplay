@@ -192,9 +192,12 @@ export default function BacktestingPage() {
     dayFetchId.current = 0;
     const expiry = new Date(expiryMs);
 
-    // Clear error and stale state immediately (before debounce delay)
+    // Clear error immediately (before debounce delay)
     setError(null);
-    setReplayResult(null);
+    // Only clear replayResult on first load — keep old chart visible during re-fetch
+    if (!lastPricing) {
+      setReplayResult(null);
+    }
 
     // Reset multi-day cache and underlying cache on new pricing params
     dayCacheRef.current.clear();
@@ -631,6 +634,22 @@ export default function BacktestingPage() {
     [checkAndIncrement]
   );
 
+  /** Auto-update params when user changes date/time/ticker after initial load (no button click) */
+  const handleParamChange = useCallback(
+    (selection: MomentSelection) => {
+      const prevDate = moment?.date;
+      setMoment(selection);
+
+      // If date changed, resolve new default expiry and reset strike to ATM
+      if (selection.date !== prevDate) {
+        setCurrentExpiry(resolveDefaultExpiry(selection.date));
+        setSelectedStrike(0);
+        setViewedDate(selection.date);
+      }
+    },
+    [moment?.date]
+  );
+
   /** Toggle call/put — preserves viewedDate, only changes optionType (item 2 & 8) */
   const handleToggleRight = useCallback((right: Right) => {
     setSelectedRight(right);
@@ -770,6 +789,7 @@ export default function BacktestingPage() {
             {/* Step 1 — always visible */}
             <MomentPicker
               onLoadChain={handleLoadChain}
+              onParamChange={lastPricing ? handleParamChange : undefined}
               loading={isInitialLoading}
               selectedRight={selectedRight}
               onRightChange={handleToggleRight}
