@@ -174,17 +174,11 @@ export default function BacktestingPage() {
     // Clear error and stale state immediately (before debounce delay)
     setError(null);
     setReplayResult(null);
-    setLoading(true);
 
     // Reset multi-day cache and underlying cache on new pricing params
     dayCacheRef.current.clear();
     underlyingCacheRef.current.clear();
     setUnderlyingPoints([]);
-
-    // Do NOT reset viewedDate here for call/put toggle (item 2 & 8)
-    // Only reset when ticker, date, entryTime, or expiry change
-    // selectedRight changes should preserve viewedDate
-    // We detect this by checking if viewedDate was already set to entry date range
 
     // Reset exit P&L since bars changed
     setExitPL(null);
@@ -194,6 +188,7 @@ export default function BacktestingPage() {
     setThetaDecayPrice(undefined);
 
     const timer = setTimeout(async () => {
+      setLoading(true);
       try {
         let strike = selectedStrike;
 
