@@ -125,41 +125,11 @@ interface PolygonAggResponse {
 }
 
 /**
- * Fetch 5-minute OHLCV bars for a ticker on a specific date.
- * Used for chart display. Enforces a 60-day lookback guard.
+ * Convert raw Polygon agg results to IntradayBar[], filtering to regular trading hours.
  */
-export async function getIntradayBars(
-  symbol: string,
-  date: string
-): Promise<IntradayBar[]> {
-  // 60-day lookback guard
-  const requestedDate = new Date(date + "T12:00:00Z");
-  const sixtyDaysAgo = new Date();
-  sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-  sixtyDaysAgo.setHours(0, 0, 0, 0);
-
-  if (requestedDate < sixtyDaysAgo) {
-    const err = new Error("Date exceeds 60-day lookback limit") as Error & { code?: string };
-    err.code = "LOOKBACK_EXCEEDED";
-    throw err;
-  }
-
-  const key = `chart:${symbol.toUpperCase()}:${date}`;
-  const cached = getCached(chartCache, key);
-  if (cached) return cached;
-
-  const ticker = symbol.toUpperCase();
-  const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=500`;
-
-  const data = await polygonFetch<PolygonAggResponse>(path);
-
-  if (!data.results || data.results.length === 0) {
-    throw new Error("No intraday data returned from Polygon");
-  }
-
+function polygonResultsToBars(results: NonNullable<PolygonAggResponse["results"]>): IntradayBar[] {
   const bars: IntradayBar[] = [];
-
-  for (const bar of data.results) {
+  for (const bar of results) {
     const d = new Date(bar.t);
     // Convert UTC to ET (approximate: UTC-5 for EST)
     const hour = d.getUTCHours() - 5;
@@ -190,6 +160,131 @@ export async function getIntradayBars(
       volume: bar.v,
     });
   }
+  return bars;
+}
+
+/**
+ * Yahoo Finance fallback for intraday bars.
+ * Uses query2.finance.yahoo.com with 5m interval.
+ */
+async function fetchYahooIntradayBars(ticker: string, date: string): Promise<IntradayBar[]> {
+  // Compute Unix timestamps for 9:30 AM and 4:01 PM ET on the given date
+  const dateObj = new Date(date + "T14:30:00Z"); // 9:30 AM ET = 14:30 UTC
+  const period1 = Math.floor(dateObj.getTime() / 1000);
+  const endObj = new Date(date + "T21:01:00Z"); // 4:01 PM ET = 21:01 UTC
+  const period2 = Math.floor(endObj.getTime() / 1000);
+
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=5m&period1=${period1}&period2=${period2}&includePrePost=false`;
+
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; OptionsReplay/1.0)" },
+  });
+  if (!res.ok) throw new Error(`Yahoo ${res.status}`);
+
+  const json = await res.json();
+  const result = json?.chart?.result?.[0];
+  if (!result) throw new Error("No Yahoo data");
+
+  const timestamps: number[] = result.timestamp ?? [];
+  const quotes = result.indicators?.quote?.[0] ?? {};
+  const opens: (number | null)[] = quotes.open ?? [];
+  const highs: (number | null)[] = quotes.high ?? [];
+  const lows: (number | null)[] = quotes.low ?? [];
+  const closes: (number | null)[] = quotes.close ?? [];
+  const volumes: (number | null)[] = quotes.volume ?? [];
+
+  const bars: IntradayBar[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const c = closes[i];
+    if (c == null || c === 0) continue;
+
+    const ts = timestamps[i] * 1000;
+    const d = new Date(ts);
+    const hour = d.getUTCHours() - 5;
+    const minute = d.getUTCMinutes();
+    const totalMin = hour * 60 + minute;
+
+    if (totalMin < 570 || totalMin > 960) continue;
+
+    const hh = hour.toString().padStart(2, "0");
+    const mm = minute.toString().padStart(2, "0");
+    const timeStr = `${hh}:${mm}`;
+
+    let h12 = hour;
+    const suffix = h12 >= 12 ? "PM" : "AM";
+    if (h12 === 0) h12 = 12;
+    else if (h12 > 12) h12 -= 12;
+    const label = `${h12}:${mm} ${suffix}`;
+
+    bars.push({
+      time: timeStr,
+      label,
+      timestamp: ts,
+      open: opens[i] ?? c,
+      high: highs[i] ?? c,
+      low: lows[i] ?? c,
+      close: c,
+      volume: volumes[i] ?? 0,
+    });
+  }
+  return bars;
+}
+
+/**
+ * Fetch 5-minute OHLCV bars for a ticker on a specific date.
+ * Uses Polygon as primary source, Yahoo Finance as fallback.
+ * Enforces a 60-day lookback guard.
+ */
+export async function getIntradayBars(
+  symbol: string,
+  date: string
+): Promise<IntradayBar[]> {
+  // 60-day lookback guard
+  const requestedDate = new Date(date + "T12:00:00Z");
+  const sixtyDaysAgo = new Date();
+  sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+  sixtyDaysAgo.setHours(0, 0, 0, 0);
+
+  if (requestedDate < sixtyDaysAgo) {
+    const err = new Error("Date exceeds 60-day lookback limit") as Error & { code?: string };
+    err.code = "LOOKBACK_EXCEEDED";
+    throw err;
+  }
+
+  const key = `chart:${symbol.toUpperCase()}:${date}`;
+  const cached = getCached(chartCache, key);
+  if (cached) return cached;
+
+  const ticker = symbol.toUpperCase();
+  let bars: IntradayBar[] = [];
+  let source = "polygon";
+
+  // Step 1 — Polygon fetch
+  try {
+    const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=1000`;
+    const data = await polygonFetch<PolygonAggResponse>(path);
+    if (data.results && data.results.length > 0) {
+      bars = polygonResultsToBars(data.results);
+    }
+  } catch {
+    // Polygon failed — will try Yahoo
+  }
+
+  // Step 2 — Yahoo fallback if Polygon returned < 50 bars
+  if (bars.length < 50) {
+    try {
+      const yahooBars = await fetchYahooIntradayBars(ticker, date);
+      if (yahooBars.length > bars.length) {
+        bars = yahooBars;
+        source = "yahoo";
+      }
+    } catch {
+      // Yahoo also failed — use whatever Polygon returned
+    }
+  }
+
+  // Step 3 — Log and return
+  console.warn(`[underlying] ${ticker} ${date}: ${bars.length} bars from ${source}`);
 
   if (bars.length === 0) {
     throw new Error("No bars within trading hours");

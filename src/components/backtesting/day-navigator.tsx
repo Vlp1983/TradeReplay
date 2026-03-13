@@ -93,7 +93,7 @@ export function DayNavigator({
 
   return (
     <div
-      className="flex items-center gap-2"
+      className="flex items-center justify-center gap-2"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >

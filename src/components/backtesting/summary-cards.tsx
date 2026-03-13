@@ -39,7 +39,7 @@ export function SummaryCards({ metrics, right, exitPL }: SummaryCardsProps) {
     },
     {
       label: "DTE at Entry",
-      value: `${metrics.dteAtEntry} day${metrics.dteAtEntry !== 1 ? "s" : ""}`,
+      value: metrics.dteAtEntry === 0 ? "Same Day" : `${metrics.dteAtEntry} day${metrics.dteAtEntry !== 1 ? "s" : ""}`,
     },
   ];
 

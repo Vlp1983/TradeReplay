@@ -211,8 +211,16 @@ export function ContractReplay({
   // Determine if the contract has expired (backward-looking only)
   const isExpired = expiryDateStr < today;
 
-  // Show DTE in contract info area
-  const displayDTE = viewedDayDTE ?? metrics.dteAtEntry;
+  // Compute DTE dynamically from selected expiry and entry date
+  const computedDTE = useMemo(() => {
+    if (!selectedExpiryISO) return metrics.dteAtEntry;
+    const expiryMs = new Date(selectedExpiryISO).getTime();
+    const entryMs = new Date(contract.date + "T12:00:00Z").getTime();
+    return Math.max(0, Math.round((expiryMs - entryMs) / 86400000));
+  }, [selectedExpiryISO, contract.date, metrics.dteAtEntry]);
+
+  // Show DTE in contract info area — use viewed day DTE if viewing a different day
+  const displayDTE = viewedDayDTE ?? computedDTE;
 
   // Toggle handler for "Show Underlying"
   const handleToggleUnderlying = () => {
@@ -331,7 +339,7 @@ export function ContractReplay({
           <>
             <span className="text-text-muted text-[13px]">&middot;</span>
             <div className={`flex flex-wrap items-center gap-2 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
-              <span className="text-[12px] font-medium text-text-muted">Expiry:</span>
+              <span className="text-[12px] font-medium text-text-muted">Expiration Date:</span>
               {availableExpiries.map((exp) => {
                 const isActive = exp.date === selectedExpiryISO;
                 return (
@@ -370,6 +378,12 @@ export function ContractReplay({
           <>
             <span className="text-text-muted text-[13px]">&middot;</span>
             <span className="text-[13px] text-text-muted">{displayDTE} DTE</span>
+          </>
+        )}
+        {displayDTE === 0 && (
+          <>
+            <span className="text-text-muted text-[13px]">&middot;</span>
+            <span className="text-[13px] text-text-muted">Same Day</span>
           </>
         )}
       </div>
