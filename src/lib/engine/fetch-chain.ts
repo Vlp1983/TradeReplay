@@ -175,25 +175,19 @@ export function pricingToChainData(
   };
 }
 
-// ─── Adapt pricing result → ReplayResult ────────────────────────────
+// ─── Convert bars to TimePoints ─────────────────────────────────────
 
 /**
- * Convert OptionBar[] from the pricing engine into a full ReplayResult
- * compatible with the existing ContractReplay component.
+ * Convert OptionBar[] to TimePoint[], computing P&L relative to a given
+ * entryPremium. Exported so multi-day views can reuse this with the
+ * original entry premium from Day 1.
  */
-export function pricingToReplayResult(
-  contract: SelectedContract,
-  pricing: OptionPricingResult
-): ReplayResult {
-  const bars = pricing.bars;
-  if (bars.length === 0) {
-    return emptyReplayResult(contract, pricing);
-  }
-
-  const entryPremium = bars[0].open;
-
-  // Build TimePoint[] from OptionBar[]
-  const allPoints: TimePoint[] = bars.map((bar) => {
+export function barsToTimePoints(
+  bars: OptionBar[],
+  entryPremium: number,
+  dayIndex: number = 0
+): TimePoint[] {
+  const points: TimePoint[] = bars.map((bar) => {
     const premium = bar.close;
     const plDollar = +((premium - entryPremium) * 100).toFixed(0);
     const plPct = entryPremium > 0.01
@@ -217,9 +211,59 @@ export function pricingToReplayResult(
       price: +premium.toFixed(2),
       pl_dollar: plDollar,
       pl_pct: plPct,
-      dayIndex: 0,
+      dayIndex,
     };
   });
+
+  return points;
+}
+
+// ─── Filter bars at entry time ──────────────────────────────────────
+
+/**
+ * Filter bars to only include those at or after the given entry time.
+ * Entry time is in ET (e.g. "10:00"), bar timestamps are UTC.
+ */
+function filterBarsAtEntryTime(bars: OptionBar[], entryTime: string): OptionBar[] {
+  const [eH, eM] = entryTime.split(":").map(Number);
+  const entryET = eH * 60 + eM;
+
+  return bars.filter((bar) => {
+    const d = new Date(bar.timestamp);
+    const barET = (d.getUTCHours() - 5) * 60 + d.getUTCMinutes();
+    return barET >= entryET;
+  });
+}
+
+// ─── Adapt pricing result → ReplayResult ────────────────────────────
+
+/**
+ * Convert OptionBar[] from the pricing engine into a full ReplayResult
+ * compatible with the existing ContractReplay component.
+ *
+ * Filters bars to only include those from the entry time onward.
+ */
+export function pricingToReplayResult(
+  contract: SelectedContract,
+  pricing: OptionPricingResult
+): ReplayResult {
+  let bars = pricing.bars;
+  if (bars.length === 0) {
+    return emptyReplayResult(contract, pricing);
+  }
+
+  // Filter bars to start from entry time (not 9:30 AM open)
+  if (contract.entryTime) {
+    bars = filterBarsAtEntryTime(bars, contract.entryTime);
+    if (bars.length === 0) {
+      return emptyReplayResult(contract, pricing);
+    }
+  }
+
+  const entryPremium = bars[0].open;
+
+  // Build TimePoint[] from OptionBar[]
+  const allPoints = barsToTimePoints(bars, entryPremium);
 
   // Force first point to exact entry
   if (allPoints.length > 0) {
@@ -228,7 +272,15 @@ export function pricingToReplayResult(
     allPoints[0].pl_pct = 0;
   }
 
-  const metrics = computeMetrics(allPoints, entryPremium, pricing);
+  // Compute DTE
+  const msPerDay = 86400000;
+  const replayDate = new Date(contract.date + "T12:00:00Z");
+  const expiryDate = contract.expiration === "0dte"
+    ? replayDate
+    : resolveDefaultExpiry(contract.date);
+  const dte = Math.max(0, Math.round((expiryDate.getTime() - replayDate.getTime()) / msPerDay));
+
+  const metrics = computeMetrics(allPoints, entryPremium, pricing, dte);
   const keyMoments = detectKeyMoments(allPoints, entryPremium);
 
   return {
@@ -243,7 +295,8 @@ export function pricingToReplayResult(
 function computeMetrics(
   points: TimePoint[],
   entryPremium: number,
-  pricing: OptionPricingResult
+  pricing: OptionPricingResult,
+  dte: number
 ): ReplayMetrics {
   let peakPt = points[0];
   let troughPt = points[0];
@@ -293,6 +346,7 @@ function computeMetrics(
     gammaAtEntry: pricing.greeksAtOpen.gamma,
     thetaAtEntry: pricing.greeksAtOpen.theta,
     vegaAtEntry: pricing.greeksAtOpen.vega,
+    dteAtEntry: dte,
   };
 }
 
@@ -387,9 +441,30 @@ function emptyReplayResult(
       gammaAtEntry: pricing.greeksAtOpen.gamma,
       thetaAtEntry: pricing.greeksAtOpen.theta,
       vegaAtEntry: pricing.greeksAtOpen.vega,
+      dteAtEntry: 0,
     },
     keyMoments: [],
   };
+}
+
+// ─── Trading day helpers ────────────────────────────────────────────
+
+/**
+ * Get all trading days (Mon-Fri) between two dates inclusive.
+ */
+export function getTradingDaysBetween(start: string, end: string): string[] {
+  const days: string[] = [];
+  const s = new Date(start + "T12:00:00Z");
+  const e = new Date(end + "T12:00:00Z");
+  const d = new Date(s);
+  while (d <= e) {
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) {
+      days.push(d.toISOString().slice(0, 10));
+    }
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return days;
 }
 
 // ─── AI insights (unchanged) ─────────────────────────────────────────

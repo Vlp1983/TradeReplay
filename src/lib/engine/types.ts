@@ -97,6 +97,7 @@ export interface ReplayMetrics {
   gammaAtEntry: number;         // option gamma at entry
   thetaAtEntry: number;         // option theta at entry (per day)
   vegaAtEntry: number;          // option vega at entry (per 1% IV)
+  dteAtEntry: number;           // days to expiry at entry
 }
 
 export interface KeyMoment {

@@ -8,7 +8,9 @@ import { ReplayChart } from "./replay-chart";
 import { KeyMomentsList } from "./key-moments-list";
 import { InsightsPanel } from "./insights-panel";
 import { DeepDivePanel } from "./deep-dive-panel";
-import type { ReplayResult, Right } from "@/lib/engine/types";
+import { ExitTimePicker } from "./exit-time-picker";
+import { DayNavigator } from "./day-navigator";
+import type { ReplayResult, Right, TimePoint } from "@/lib/engine/types";
 import { to12Hour } from "@/lib/engine/dates";
 
 /** Serialized expiry from pricing API (date is ISO string after JSON round-trip) */
@@ -36,6 +38,24 @@ interface ContractReplayProps {
   loading?: boolean;
   /** Error message from last failed fetch */
   error?: string | null;
+
+  // ─── Multi-day support ───────────────────────────────────────────
+  /** All trading days from entry date to expiry date */
+  tradingDays?: string[];
+  /** Currently viewed day (YYYY-MM-DD) */
+  viewedDate?: string;
+  /** Called when user picks a different day */
+  onViewedDateChange?: (date: string) => void;
+  /** Chart points for the currently viewed day (null = use sameDayPoints) */
+  viewedDayPoints?: TimePoint[] | null;
+  /** True while fetching data for a non-entry day */
+  viewedDayLoading?: boolean;
+  /** DTE remaining for the currently viewed day */
+  viewedDayDTE?: number;
+  /** Theta-only theoretical price for the viewed day */
+  thetaDecayPrice?: number;
+  /** Called when user sets an exit time/date */
+  onExitChange?: (exitTime: string, exitDate: string) => void;
 }
 
 export function ContractReplay({
@@ -49,6 +69,14 @@ export function ContractReplay({
   onExpiryChange,
   loading,
   error,
+  tradingDays,
+  viewedDate,
+  onViewedDateChange,
+  viewedDayPoints,
+  viewedDayLoading,
+  viewedDayDTE,
+  thetaDecayPrice,
+  onExitChange,
 }: ContractReplayProps) {
   const { contract, sameDayPoints, toExpirationPoints, metrics, keyMoments } =
     result;
@@ -65,6 +93,21 @@ export function ContractReplay({
   );
   const expLabel = selectedExpiry?.label ?? contract.expiration;
 
+  // Compute expiry date string for exit picker
+  const expiryDateStr = selectedExpiryISO
+    ? new Date(selectedExpiryISO).toISOString().slice(0, 10)
+    : contract.date;
+
+  // Determine which points to show in the chart
+  const chartPoints = viewedDayPoints ?? sameDayPoints;
+  const chartLoading = loading || viewedDayLoading;
+
+  // Today's date for day navigator
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Show DTE in contract info area
+  const displayDTE = viewedDayDTE ?? metrics.dteAtEntry;
+
   return (
     <div className="rounded-[14px] border border-border bg-surface p-6">
       {/* Header */}
@@ -75,7 +118,7 @@ export function ContractReplay({
         <h2 className="text-lg font-semibold text-text-primary">
           Your Results
         </h2>
-        {loading && (
+        {chartLoading && (
           <div className="flex items-center gap-1.5 ml-2">
             <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
             <span className="text-[12px] text-text-muted">Repricing...</span>
@@ -90,7 +133,7 @@ export function ContractReplay({
         </div>
       )}
 
-      {/* Call / Put toggle + contract info + select another strike */}
+      {/* 1. Call / Put toggle + contract info + select another strike */}
       <div className="mt-3 mb-4 rounded-lg border border-border bg-bg px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -133,6 +176,11 @@ export function ContractReplay({
             <span className="text-[13px] text-text-muted">
               Entry {to12Hour(contract.entryTime)} ET
             </span>
+            {displayDTE > 0 && (
+              <span className="text-[13px] text-text-muted">
+                {displayDTE} DTE
+              </span>
+            )}
           </div>
 
           {/* Select Another Strike — prominent */}
@@ -185,20 +233,31 @@ export function ContractReplay({
         </p>
       </div>
 
-      {/* Summary cards */}
-      <div className={`mb-5 ${loading ? "opacity-50" : ""}`}>
-        <SummaryCards metrics={metrics} right={selectedRight} />
-      </div>
+      {/* Day navigator (multi-day trades only) */}
+      {tradingDays && tradingDays.length > 1 && viewedDate && onViewedDateChange && (
+        <div className={`mb-4 ${loading ? "opacity-50 pointer-events-none" : ""}`}>
+          <DayNavigator
+            tradingDays={tradingDays}
+            viewedDate={viewedDate}
+            entryDate={contract.date}
+            expiryDate={expiryDateStr}
+            today={today}
+            onDayChange={onViewedDateChange}
+            loading={chartLoading}
+          />
+        </div>
+      )}
 
-      {/* Chart with loading overlay */}
+      {/* 2. Chart (above trade summary) with loading overlay */}
       <div className="relative mb-5">
         <ReplayChart
-          sameDayPoints={sameDayPoints}
+          sameDayPoints={chartPoints}
           toExpirationPoints={toExpirationPoints}
           isMultiDay={isMultiDay}
           entryPremium={metrics.entryPremium}
+          thetaDecayPrice={thetaDecayPrice}
         />
-        {loading && (
+        {chartLoading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-surface/70 z-10">
             <div className="flex items-center gap-2 rounded-lg bg-bg/90 px-4 py-2 border border-border">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
@@ -208,7 +267,22 @@ export function ContractReplay({
         )}
       </div>
 
-      {/* Key Insights — trade moments */}
+      {/* 3. Trade Summary (entry details + secondary if-held-to-close) */}
+      <div className={`mb-5 ${loading ? "opacity-50" : ""}`}>
+        <SummaryCards metrics={metrics} right={selectedRight} />
+      </div>
+
+      {/* 4. Exit time picker */}
+      <div className="mb-5">
+        <ExitTimePicker
+          entryTime={contract.entryTime}
+          entryDate={contract.date}
+          expiryDate={expiryDateStr}
+          onExitChange={onExitChange}
+        />
+      </div>
+
+      {/* 5. Key Insights — trade moments */}
       <div className="mb-5">
         <KeyMomentsList moments={keyMoments} />
       </div>

@@ -306,6 +306,21 @@ export function generateIntradayBars(params: {
   }
 
   console.log(`[generateIntradayBars] Output: ${optionBars.length} bars, first open=${optionBars[0]?.open}, last close=${optionBars[optionBars.length - 1]?.close}`);
+
+  // Sanity check: verify put/call directional behavior
+  if (optionBars.length >= 2 && intradayBars.length >= 2) {
+    const firstBarClose = optionBars[0].close;
+    const lastBarClose = optionBars[optionBars.length - 1].close;
+    const optionMove = lastBarClose - firstBarClose;
+    const underlyingMove = intradayBars[intradayBars.length - 1].close - intradayBars[0].open;
+    console.log('[sanity check]', {
+      optionType,
+      underlyingMoveTotal: underlyingMove.toFixed(2),
+      optionMoveTotal: optionMove.toFixed(4),
+      expectedDirection: optionType === 'call' ? 'same as underlying' : 'opposite',
+    });
+  }
+
   return optionBars;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -18,6 +18,7 @@ import type {
   SelectedContract,
   ReplayResult,
   Right,
+  TimePoint,
 } from "@/lib/engine/types";
 import type { OptionPricingResult } from "@/lib/pricing/types";
 import {
@@ -25,10 +26,18 @@ import {
   resolveDefaultExpiry,
   pricingToChainData,
   pricingToReplayResult,
+  barsToTimePoints,
+  getTradingDaysBetween,
   fetchInsights,
 } from "@/lib/engine/fetch-chain";
 
 type Step = "moment" | "chain" | "replay";
+
+/** Cached day data for multi-day navigation */
+interface DayCache {
+  points: TimePoint[];
+  dte: number;
+}
 
 export default function BacktestingPage() {
   // ─── Core pricing params (changes trigger re-pricing via useEffect) ──
@@ -42,6 +51,15 @@ export default function BacktestingPage() {
   const [chainData, setChainData] = useState<ChainData | null>(null);
   const [lastPricing, setLastPricing] = useState<OptionPricingResult | null>(null);
   const [availableExpiries, setAvailableExpiries] = useState<ExpiryOption[]>([]);
+
+  // ─── Multi-day navigation state ────────────────────────────────────
+  const [viewedDate, setViewedDate] = useState<string>("");
+  const [viewedDayPoints, setViewedDayPoints] = useState<TimePoint[] | null>(null);
+  const [viewedDayLoading, setViewedDayLoading] = useState(false);
+  const [viewedDayDTE, setViewedDayDTE] = useState<number | undefined>(undefined);
+  const [thetaDecayPrice, setThetaDecayPrice] = useState<number | undefined>(undefined);
+  const dayCacheRef = useRef<Map<string, DayCache>>(new Map());
+  const dayFetchIdRef = useRef(0);
 
   // ─── UI state ─────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>("moment");
@@ -62,6 +80,14 @@ export default function BacktestingPage() {
   const entryTime = moment?.entryTime;
   const expiryMs = currentExpiry?.getTime() ?? null;
 
+  // Compute trading days for multi-day navigation
+  const tradingDays = useMemo(() => {
+    if (!date || expiryMs == null) return [];
+    const expiryStr = new Date(expiryMs).toISOString().slice(0, 10);
+    if (expiryStr === date) return []; // 0DTE — no multi-day nav
+    return getTradingDaysBetween(date, expiryStr);
+  }, [date, expiryMs]);
+
   // ─── Core pricing effect (300ms debounce) ──────────────────────────
   //
   // All pricing calls flow through this single effect. Event handlers
@@ -74,9 +100,16 @@ export default function BacktestingPage() {
     const id = ++fetchIdRef.current;
     const expiry = new Date(expiryMs);
 
-    // Clear error and stale result immediately (before debounce delay)
+    // Clear error immediately (before debounce delay)
     // so the error banner doesn't linger from a previous failed fetch
     setError(null);
+
+    // Reset multi-day state on new pricing params
+    dayCacheRef.current.clear();
+    setViewedDate(date);
+    setViewedDayPoints(null);
+    setViewedDayDTE(undefined);
+    setThetaDecayPrice(undefined);
 
     const timer = setTimeout(async () => {
       setLoading(true);
@@ -161,6 +194,12 @@ export default function BacktestingPage() {
         setReplayResult(result);
         setStep("replay");
 
+        // Cache entry day data
+        dayCacheRef.current.set(date, {
+          points: result.sameDayPoints,
+          dte: result.metrics.dteAtEntry,
+        });
+
         // Scroll to replay section on initial load
         if (scrollOnNextResult.current) {
           scrollOnNextResult.current = false;
@@ -221,6 +260,105 @@ export default function BacktestingPage() {
 
     return () => clearTimeout(timer);
   }, [ticker, date, entryTime, selectedRight, expiryMs, selectedStrike]);
+
+  // ─── Multi-day: fetch data for a non-entry day ────────────────────
+  const handleViewedDateChange = useCallback(
+    async (newDate: string) => {
+      setViewedDate(newDate);
+
+      // If it's the entry day, use the existing sameDayPoints
+      if (newDate === date) {
+        setViewedDayPoints(null); // null = use sameDayPoints from result
+        setViewedDayDTE(replayResult?.metrics.dteAtEntry);
+        setThetaDecayPrice(undefined);
+        return;
+      }
+
+      // Check cache
+      const cached = dayCacheRef.current.get(newDate);
+      if (cached) {
+        setViewedDayPoints(cached.points);
+        setViewedDayDTE(cached.dte);
+        // Approximate theta decay: entry premium + theta * days elapsed
+        if (replayResult) {
+          const daysFromEntry = cached.dte != null
+            ? replayResult.metrics.dteAtEntry - cached.dte
+            : 0;
+          const thetaPrice = replayResult.metrics.entryPremium +
+            replayResult.metrics.thetaAtEntry * daysFromEntry;
+          setThetaDecayPrice(Math.max(0.01, thetaPrice));
+        }
+        return;
+      }
+
+      // Check if data is available (not future)
+      const today = new Date().toISOString().slice(0, 10);
+      if (newDate >= today) {
+        setViewedDayPoints([]);
+        setViewedDayDTE(undefined);
+        return;
+      }
+
+      // Fetch pricing for the new day
+      if (!ticker || !currentExpiry || selectedStrike <= 0) return;
+
+      const dayId = ++dayFetchIdRef.current;
+      setViewedDayLoading(true);
+
+      try {
+        const pricing = await fetchPricing({
+          ticker,
+          replayDate: newDate,
+          strike: selectedStrike,
+          expiry: currentExpiry,
+          optionType: selectedRight,
+        });
+        if (dayId !== dayFetchIdRef.current) return; // stale
+
+        // Convert bars to points using the ORIGINAL entry premium
+        const entryPremium = replayResult?.metrics.entryPremium ?? 1.0;
+        const points = barsToTimePoints(pricing.bars, entryPremium);
+
+        // Force first point to show opening gap from entry
+        // (no zeroing — the opening price difference from entry IS the overnight move)
+
+        // Compute DTE for this day
+        const msPerDay = 86400000;
+        const dayDate = new Date(newDate + "T12:00:00Z");
+        const dte = Math.max(0, Math.round(
+          (currentExpiry.getTime() - dayDate.getTime()) / msPerDay
+        ));
+
+        // Cache
+        dayCacheRef.current.set(newDate, { points, dte });
+        setViewedDayPoints(points);
+        setViewedDayDTE(dte);
+
+        // Approximate theta decay line
+        if (replayResult) {
+          const daysFromEntry = replayResult.metrics.dteAtEntry - dte;
+          const thetaPrice = replayResult.metrics.entryPremium +
+            replayResult.metrics.thetaAtEntry * daysFromEntry;
+          setThetaDecayPrice(Math.max(0.01, thetaPrice));
+        }
+      } catch (err) {
+        if (dayId !== dayFetchIdRef.current) return;
+        console.error("[day-fetch] Error:", err);
+        setViewedDayPoints([]);
+      } finally {
+        if (dayId === dayFetchIdRef.current) {
+          setViewedDayLoading(false);
+        }
+      }
+    },
+    [date, ticker, currentExpiry, selectedStrike, selectedRight, replayResult]
+  );
+
+  // ─── Exit time handler (placeholder — stores for future deep dive) ─
+  const handleExitChange = useCallback((exitTime: string, exitDate: string) => {
+    console.log("[exit-change]", { exitTime, exitDate });
+    // TODO: compute actual P&L at exit point and pass to SummaryCards
+  }, []);
 
   // ─── Event handlers (set state only — useEffect handles fetching) ──
 
@@ -303,6 +441,11 @@ export default function BacktestingPage() {
     setSelectedStrike(0);
     setAvailableExpiries([]);
     setError(null);
+    setViewedDate("");
+    setViewedDayPoints(null);
+    setViewedDayDTE(undefined);
+    setThetaDecayPrice(undefined);
+    dayCacheRef.current.clear();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -389,6 +532,14 @@ export default function BacktestingPage() {
                       onExpiryChange={handleExpiryChange}
                       loading={loading}
                       error={error}
+                      tradingDays={tradingDays}
+                      viewedDate={viewedDate}
+                      onViewedDateChange={handleViewedDateChange}
+                      viewedDayPoints={viewedDayPoints}
+                      viewedDayLoading={viewedDayLoading}
+                      viewedDayDTE={viewedDayDTE}
+                      thetaDecayPrice={thetaDecayPrice}
+                      onExitChange={handleExitChange}
                     />
                   </motion.div>
                 )}

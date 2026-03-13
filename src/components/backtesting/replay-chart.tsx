@@ -20,6 +20,8 @@ interface ReplayChartProps {
   toExpirationPoints: TimePoint[];
   isMultiDay: boolean;
   entryPremium: number;
+  /** Optional: theoretical theta-only price for the currently viewed day */
+  thetaDecayPrice?: number;
 }
 
 interface TooltipProps {
@@ -93,6 +95,7 @@ export function ReplayChart({
   toExpirationPoints,
   isMultiDay,
   entryPremium,
+  thetaDecayPrice,
 }: ReplayChartProps) {
   const [view, setView] = useState<ViewMode>("pl");
   const [range, setRange] = useState<ChartRange>("same_day");
@@ -101,26 +104,38 @@ export function ReplayChart({
 
   const dataKey = view === "pl" ? "pl_dollar" : "price";
 
-  // Tight Y-axis domain — pad 15% above and below the actual data range
+  // Reference value: breakeven at $0 for P/L, entry premium for price view
+  const refValue = view === "pl" ? 0 : entryPremium;
+
+  // Y-axis domain — centered around the reference value so breakeven/entry
+  // line appears roughly in the middle of the chart
   const { yMin, yMax } = useMemo(() => {
     if (!points.length) return { yMin: 0, yMax: 0 };
     const values = points.map((p) => p[dataKey] as number);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min || 1;
-    const pad = span * 0.15;
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    // Center the axis around the reference value
+    const maxDist = Math.max(
+      Math.abs(dataMax - refValue),
+      Math.abs(dataMin - refValue),
+      1 // minimum span
+    );
+    const pad = maxDist * 0.15;
     return {
-      yMin: Math.floor(min - pad),
-      yMax: Math.ceil(max + pad),
+      yMin: Math.floor(refValue - maxDist - pad),
+      yMax: Math.ceil(refValue + maxDist + pad),
     };
-  }, [points, dataKey]);
+  }, [points, dataKey, refValue]);
 
-  const lineColor = "#3B82F6";
-
-  // Entry value for the reference line
-  // P/L view: entry is at $0 (breakeven)
-  // Premium view: entry is at the actual entry premium
-  const entryValue = view === "pl" ? 0 : entryPremium;
+  // Compute gradient position for green/red coloring.
+  // The gradient runs top (y=0) → bottom (y=1) in SVG space.
+  // refValue maps to a certain position in [yMin, yMax].
+  const refPosition = useMemo(() => {
+    const range = yMax - yMin;
+    if (range === 0) return 0.5;
+    // In SVG, top is 0, bottom is 1. yMax is at top, yMin is at bottom.
+    return Math.max(0, Math.min(1, (yMax - refValue) / range));
+  }, [yMin, yMax, refValue]);
 
   return (
     <div className="rounded-lg border border-border bg-bg p-4">
@@ -177,9 +192,19 @@ export function ReplayChart({
           margin={{ top: 8, right: 8, bottom: 4, left: 8 }}
         >
           <defs>
-            <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={lineColor} stopOpacity={0.18} />
-              <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
+            {/* Green/red fill gradient — green above ref, red below */}
+            <linearGradient id="chartFillGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#22C55E" stopOpacity={0.18} />
+              <stop offset={`${refPosition * 100}%`} stopColor="#22C55E" stopOpacity={0.08} />
+              <stop offset={`${refPosition * 100}%`} stopColor="#EF4444" stopOpacity={0.08} />
+              <stop offset="100%" stopColor="#EF4444" stopOpacity={0} />
+            </linearGradient>
+            {/* Green/red stroke gradient */}
+            <linearGradient id="chartLineGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#22C55E" />
+              <stop offset={`${refPosition * 100}%`} stopColor="#22C55E" />
+              <stop offset={`${refPosition * 100}%`} stopColor="#EF4444" />
+              <stop offset="100%" stopColor="#EF4444" />
             </linearGradient>
           </defs>
           <CartesianGrid
@@ -211,7 +236,7 @@ export function ReplayChart({
 
           {/* Entry reference line — blue dashed */}
           <ReferenceLine
-            y={entryValue}
+            y={refValue}
             stroke="#3B82F6"
             strokeWidth={1.5}
             strokeDasharray="6 4"
@@ -224,16 +249,32 @@ export function ReplayChart({
             }}
           />
 
+          {/* Theta decay reference line — dotted, only in premium view */}
+          {thetaDecayPrice != null && view === "price" && (
+            <ReferenceLine
+              y={thetaDecayPrice}
+              stroke="rgba(246,248,255,0.25)"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              label={{
+                value: `Theta $${thetaDecayPrice.toFixed(2)}`,
+                position: "right",
+                fill: "rgba(246,248,255,0.35)",
+                fontSize: 10,
+              }}
+            />
+          )}
+
           <Area
             type="monotone"
             dataKey={dataKey}
-            stroke={lineColor}
+            stroke="url(#chartLineGrad)"
             strokeWidth={2}
-            fill="url(#chartGrad)"
+            fill="url(#chartFillGrad)"
             dot={false}
             activeDot={{
               r: 4,
-              stroke: lineColor,
+              stroke: "#3B82F6",
               strokeWidth: 2,
               fill: "#0B1220",
             }}
